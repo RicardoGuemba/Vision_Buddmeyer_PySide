@@ -23,7 +23,7 @@ Pillow>=10.2.0
 numpy>=1.24.0
 
 # Comunicação CLP (Omron NX102)
-aphyt>=2.1.9
+aphyt>=0.1.24
 
 # Logging Estruturado
 structlog>=24.1.0

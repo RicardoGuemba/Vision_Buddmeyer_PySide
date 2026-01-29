@@ -369,7 +369,7 @@ def install_dependencies(venv_python, requirements_file):
         "accelerate>=0.27.0",
         "safetensors>=0.4.0",
         "timm>=0.9.0",  # Necessário para alguns modelos DETR
-        "aphyt>=2.1.9",
+        "aphyt>=0.1.24",
     ]
     
     try:
