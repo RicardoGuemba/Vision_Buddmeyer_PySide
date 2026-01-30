@@ -61,6 +61,12 @@ Ou:
 python buddmeyer_vision_v2/main.py
 ```
 
+## 📖 Roteiro para o cliente
+
+Para uso no ambiente do cliente (configuração do CLP, logs e troubleshooting), consulte:
+
+- **[ROTEIRO_CLIENTE.md](ROTEIRO_CLIENTE.md)** – passo a passo para configurar o IP do CLP, localizar logs e proceder em caso de erro de conexão ou envio de tag.
+
 ## 📁 Estrutura do Projeto
 
 ```

@@ -15,6 +15,9 @@ from PySide6.QtCore import Qt, Slot
 from PySide6.QtGui import QFont
 
 from config import get_settings
+from core.logger import get_logger
+
+logger = get_logger("config")
 
 
 class ConfigurationPage(QWidget):
@@ -537,6 +540,13 @@ class ConfigurationPage(QWidget):
         # Salva em arquivo
         config_path = Path(__file__).parent.parent.parent / "config" / "config.yaml"
         s.to_yaml(config_path)
+        
+        logger.info(
+            "config_saved",
+            cip_ip=s.cip.ip,
+            cip_port=s.cip.port,
+            config_path=str(config_path),
+        )
         
         QMessageBox.information(self, "Sucesso", "Configurações salvas com sucesso!")
     

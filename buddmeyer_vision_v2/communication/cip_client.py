@@ -176,15 +176,38 @@ class CIPClient(QObject):
         self._reconnect_attempts = 0
         self._max_reconnect_attempts = self._settings.cip.max_retries
     
+    def _reload_connection_config(self) -> None:
+        """Recarrega IP, porta e timeout da configuração atual (arquivo/UI)."""
+        self._settings = get_settings()
+        self._ip = self._settings.cip.ip
+        self._port = self._settings.cip.port
+        self._timeout = self._settings.cip.connection_timeout
+        self._simulated = self._settings.cip.simulated
+        self._state.ip = self._ip
+        self._state.port = self._port
+    
     async def connect(self) -> bool:
         """
         Conecta ao CLP.
+        
+        Usa sempre a configuração atual (IP/porta) do config/UI ao conectar.
         
         Returns:
             True se conectado com sucesso
         """
         if self._state.is_connected:
             return True
+        
+        # Recarrega config para usar IP/porta atual (evita IP antigo em memória)
+        self._reload_connection_config()
+        
+        logger.info(
+            "cip_connecting",
+            ip=self._ip,
+            port=self._port,
+            timeout=self._timeout,
+            simulated=self._simulated,
+        )
         
         self._update_state(ConnectionStatus.CONNECTING)
         
@@ -319,7 +342,7 @@ class CIPClient(QObject):
         except Exception as e:
             duration = (time.perf_counter() - start_time) * 1000
             self._cip_logger.log_read(plc_name, None, False, str(e), duration)
-            self._handle_error(str(e))
+            self._handle_error(str(e), tag_name=plc_name)
             raise CIPTagError(f"Erro ao ler TAG {logical_name}: {e}")
     
     async def write_tag(self, logical_name: str, value: Any) -> bool:
@@ -371,7 +394,7 @@ class CIPClient(QObject):
         except Exception as e:
             duration = (time.perf_counter() - start_time) * 1000
             self._cip_logger.log_write(plc_name, value, False, str(e), duration)
-            self._handle_error(str(e))
+            self._handle_error(str(e), tag_name=plc_name)
             raise CIPTagError(f"Erro ao escrever TAG {logical_name}: {e}")
     
     async def write_detection_result(
@@ -447,11 +470,19 @@ class CIPClient(QObject):
         self._state.status = status
         self.state_changed.emit(self._state)
     
-    def _handle_error(self, error: str) -> None:
-        """Trata erros de comunicação."""
+    def _handle_error(self, error: str, tag_name: Optional[str] = None) -> None:
+        """Trata erros de comunicação. Registra IP e tag para rastreio."""
         self._state.error_count += 1
         self._state.last_error = error
         self._metrics.increment("cip_errors")
+        
+        logger.error(
+            "cip_error",
+            ip=self._state.ip,
+            port=self._state.port,
+            tag=tag_name,
+            error=error,
+        )
         
         # Marca como degradado se muitos erros
         if self._state.error_count > 5 and self._state.status == ConnectionStatus.CONNECTED:
