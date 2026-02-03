@@ -17,7 +17,7 @@ from config import get_settings
 from core.logger import get_logger
 from core.metrics import MetricsCollector
 
-from .tag_map import TagMap
+from .tag_map import TagMap, TagType
 from .connection_state import ConnectionState, ConnectionStatus
 from .cip_logger import CIPLogger
 from .exceptions import CIPConnectionError, CIPTimeoutError, CIPTagError
@@ -404,6 +404,43 @@ class CIPClient(QObject):
                 self.tag_read.emit(logical_name, value)
                 return value
                 
+            except RecursionError as e:
+                # Bug conhecido na biblioteca aphyt: RecursionError em certos TAGs
+                # Trata como erro fatal e retorna valor padrão seguro baseado no tipo
+                duration = (time.perf_counter() - start_time) * 1000
+                error_msg = f"RecursionError aphyt (bug na biblioteca): retornando valor padrão"
+                self._cip_logger.log_read(plc_name, None, False, error_msg, duration)
+                
+                logger.error(
+                    "cip_read_recursion_aphyt_bug", 
+                    tag=plc_name,
+                    error=str(e)[:50]
+                )
+                
+                # Define valor padrão seguro baseado no tipo esperado do TAG
+                definition = self._tag_map.get_definition(logical_name)
+                if definition:
+                    # Retorna valor padrão do tipo
+                    if definition.tag_type == TagType.BOOL:
+                        safe_value = False  # Padrão seguro para booleano
+                    elif definition.tag_type == TagType.INT:
+                        safe_value = 0
+                    elif definition.tag_type == TagType.REAL:
+                        safe_value = 0.0
+                    else:
+                        safe_value = None
+                    
+                    logger.warning(
+                        "cip_read_recursion_returning_default",
+                        tag=plc_name,
+                        default_value=safe_value
+                    )
+                    self.tag_read.emit(logical_name, safe_value)
+                    return safe_value
+                else:
+                    # Se não conseguir determinar o tipo, relança o erro
+                    raise CIPTagError(f"RecursionError ao ler TAG {logical_name}: bug na biblioteca aphyt")
+            
             except Exception as e:
                 duration = (time.perf_counter() - start_time) * 1000
                 self._cip_logger.log_read(plc_name, None, False, str(e), duration)

@@ -66,13 +66,16 @@ class CIPLogger:
         duration_ms: float = 0.0,
     ) -> None:
         """Registra uma operação de leitura."""
+        # Sanitiza erro para evitar problemas de serialização
+        safe_error = self._sanitize_error(error) if error else None
+        
         entry = CIPLogEntry(
             timestamp=datetime.now(),
             operation="read",
             tag_name=tag_name,
             value=value if success else None,
             success=success,
-            error=error,
+            error=safe_error,
             duration_ms=duration_ms,
         )
         
@@ -85,7 +88,7 @@ class CIPLogger:
         if success:
             logger.debug("cip_read", tag=tag_name, value=value, duration_ms=duration_ms)
         else:
-            logger.warning("cip_read_error", tag=tag_name, error=error)
+            logger.warning("cip_read_error", tag=tag_name, error=safe_error)
     
     def log_write(
         self,
@@ -96,13 +99,16 @@ class CIPLogger:
         duration_ms: float = 0.0,
     ) -> None:
         """Registra uma operação de escrita."""
+        # Sanitiza erro para evitar problemas de serialização
+        safe_error = self._sanitize_error(error) if error else None
+        
         entry = CIPLogEntry(
             timestamp=datetime.now(),
             operation="write",
             tag_name=tag_name,
             value=value,
             success=success,
-            error=error,
+            error=safe_error,
             duration_ms=duration_ms,
         )
         
@@ -115,17 +121,20 @@ class CIPLogger:
         if success:
             logger.debug("cip_write", tag=tag_name, value=value, duration_ms=duration_ms)
         else:
-            logger.warning("cip_write_error", tag=tag_name, value=value, error=error)
+            logger.warning("cip_write_error", tag=tag_name, value=value, error=safe_error)
     
     def log_connect(self, ip: str, success: bool, error: Optional[str] = None) -> None:
         """Registra tentativa de conexão."""
+        # Sanitiza erro para evitar problemas de serialização
+        safe_error = self._sanitize_error(error) if error else None
+        
         entry = CIPLogEntry(
             timestamp=datetime.now(),
             operation="connect",
             tag_name=None,
             value=ip,
             success=success,
-            error=error,
+            error=safe_error,
         )
         
         with self._lock:
@@ -135,7 +144,7 @@ class CIPLogger:
         if success:
             logger.info("cip_connected", ip=ip)
         else:
-            logger.error("cip_connect_error", ip=ip, error=error)
+            logger.error("cip_connect_error", ip=ip, error=safe_error)
     
     def log_disconnect(self, reason: str = "normal") -> None:
         """Registra desconexão."""
@@ -174,3 +183,23 @@ class CIPLogger:
         """Limpa histórico."""
         with self._lock:
             self._entries.clear()
+    
+    @staticmethod
+    def _sanitize_error(error: Optional[str]) -> Optional[str]:
+        """
+        Sanitiza mensagem de erro para evitar recursão durante serialização.
+        
+        Remove detalhes complexos que podem causar problemas com structlog.
+        """
+        if error is None:
+            return None
+        
+        try:
+            # Se for string, apenas trunca se muito longa
+            error_str = str(error)
+            if len(error_str) > 500:
+                return error_str[:500] + "..."
+            return error_str
+        except Exception as e:
+            # Se houver erro ao converter para string, retorna um genérico
+            return f"Error serialization failed: {type(error).__name__}"

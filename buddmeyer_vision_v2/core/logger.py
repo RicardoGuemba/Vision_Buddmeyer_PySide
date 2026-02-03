@@ -51,6 +51,25 @@ def add_timestamp(logger: logging.Logger, method_name: str, event_dict: dict) ->
     return event_dict
 
 
+def safe_value_processor(logger: logging.Logger, method_name: str, event_dict: dict) -> dict:
+    """
+    Processa valores que podem causar problemas de serialização.
+    
+    Converte objetos problemáticos para strings seguras para evitar
+    recursão infinita durante logging.
+    """
+    for key, value in event_dict.items():
+        if value is None or isinstance(value, (str, int, float, bool)):
+            continue
+        try:
+            # Tenta converter para string de forma segura
+            str(value)
+        except (RecursionError, ValueError):
+            # Se falhar, usa uma representação segura
+            event_dict[key] = f"<{type(value).__name__} - serialization failed>"
+    return event_dict
+
+
 def setup_logging(
     level: str = "INFO",
     log_file: Optional[str] = None,
@@ -97,6 +116,7 @@ def setup_logging(
         structlog.stdlib.add_log_level,
         add_correlation_id,
         add_timestamp,
+        safe_value_processor,
         structlog.stdlib.PositionalArgumentsFormatter(),
         structlog.processors.StackInfoRenderer(),
         structlog.processors.UnicodeDecoder(),

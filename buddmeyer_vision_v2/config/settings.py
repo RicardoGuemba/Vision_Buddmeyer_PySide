@@ -88,6 +88,8 @@ class RobotControlSettings(BaseModel):
     ack_timeout: float = Field(default=5.0, ge=1.0, description="Timeout para ACK do robô (s)")
     pick_timeout: float = Field(default=30.0, ge=5.0, description="Timeout para pick (s)")
     place_timeout: float = Field(default=30.0, ge=5.0, description="Timeout para place (s)")
+    authorization_timeout: float = Field(default=30.0, ge=5.0, description="Timeout para autorização CLP (s)")
+    bypass_authorization: bool = Field(default=False, description="Bypass autorização CLP (para testes)")
 
 
 class TagSettings(BaseModel):

@@ -176,6 +176,8 @@ class RobotController(QObject):
         self._ack_timeout = self._settings.robot_control.ack_timeout
         self._pick_timeout = self._settings.robot_control.pick_timeout
         self._place_timeout = self._settings.robot_control.place_timeout
+        self._authorization_timeout = self._settings.robot_control.authorization_timeout
+        self._bypass_authorization = self._settings.robot_control.bypass_authorization
         
         # Timer para polling
         self._poll_timer: Optional[QTimer] = None
@@ -255,6 +257,8 @@ class RobotController(QObject):
         self._ack_timeout = self._settings.robot_control.ack_timeout
         self._pick_timeout = self._settings.robot_control.pick_timeout
         self._place_timeout = self._settings.robot_control.place_timeout
+        self._authorization_timeout = self._settings.robot_control.authorization_timeout
+        self._bypass_authorization = self._settings.robot_control.bypass_authorization
         
         self._is_running = True
         self._transition_to(RobotControlState.INITIALIZING)
@@ -419,6 +423,24 @@ class RobotController(QObject):
             # Verifica segurança primeiro
             if not await self._check_safety():
                 self._transition_to(RobotControlState.SAFETY_BLOCKED)
+                return
+            
+            # Se bypass habilitado, passa direto
+            if self._bypass_authorization:
+                logger.info("detection_authorized_via_bypass")
+                self._transition_to(RobotControlState.DETECTING)
+                return
+            
+            # Verifica timeout de autorização
+            # Se houver muita demora, assume que a autorização é implícita
+            # (pode ser que o TAG esteja com problema, como RecursionError na aphyt)
+            elapsed = (datetime.now() - self._state_enter_time).total_seconds()
+            if elapsed > self._authorization_timeout:
+                logger.warning(
+                    "authorization_timeout_implicit_allow",
+                    timeout=self._authorization_timeout
+                )
+                self._transition_to(RobotControlState.DETECTING)
                 return
             
             # Lê autorização
