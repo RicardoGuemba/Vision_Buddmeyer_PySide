@@ -19,7 +19,7 @@ Este documento lista todos os campos de **digitação** (input) e **exibição**
   → **Função:** Mostra em qual etapa do ciclo pick-and-place o sistema está (detecção, envio ao CLP, aguardando pick/place, etc.).
 
 ### 1.2. Barra de controles (inferior)
-- **1.2.1** Fonte — Input (Combo) — Seletor: Arquivo de Vídeo, Câmera USB, Stream RTSP, Câmera GigE, Câmera GenTL  
+- **1.2.1** Fonte — Input (Combo) — Seletor: Arquivo de Vídeo, Câmera USB, Câmera GigE, Câmera GenTL  
   → **Função:** Define `source_type`; escolhe qual adaptador de vídeo será usado (`StreamManager.change_source`).
 
 - **1.2.2** Selecionar... — Botão — Abre diálogo para selecionar arquivo de vídeo (visível só para fonte "Arquivo de Vídeo")  
@@ -83,11 +83,11 @@ Este documento lista todos os campos de **digitação** (input) e **exibição**
 - **1.3.10** Confiança (Última Detecção) — Display — Confiança da detecção  
   → **Função:** Exibe a confiança da última detecção (ex.: 95%); atualizado por `update_detection`; indica qualidade da detecção.
 
-- **1.3.11** Centroide X — Display — Coordenada X do centroide  
-  → **Função:** Exibe a coordenada X do centroide da última detecção; enviada ao CLP como CENTROID_X; atualizado por `update_detection`.
+- **1.3.11** Centroide X — Display — Coordenada X do centroide (em mm: px × mm/px)  
+  → **Função:** Exibe a coordenada X do centroide da última detecção; valor em mm (coord_px × roi_calibration_mm_per_px); enviada ao CLP como CENTROID_X; atualizado por `update_detection`.
 
-- **1.3.12** Centroide Y — Display — Coordenada Y do centroide  
-  → **Função:** Exibe a coordenada Y do centroide da última detecção; enviada ao CLP como CENTROID_Y; atualizado por `update_detection`.
+- **1.3.12** Centroide Y — Display — Coordenada Y do centroide (em mm: px × mm/px)  
+  → **Função:** Exibe a coordenada Y do centroide da última detecção; valor em mm (coord_px × roi_calibration_mm_per_px); enviada ao CLP como CENTROID_Y; atualizado por `update_detection`.
 
 - **1.3.13** Ativar ROI — Input (CheckBox) — Liga/desliga ROI (coordenadas configuradas em Configuração → Imagem)  
   → **Função:** Liga ou desliga o recorte de ROI no pipeline; quando ativo, só a região [x,y,w,h] é usada na detecção; coordenadas vêm de Configuração; emite `roi_changed` → `_on_roi_changed` atualiza `preprocess.roi`.
@@ -132,31 +132,28 @@ Este documento lista todos os campos de **digitação** (input) e **exibição**
 - **2.2.4** Índice (USB) — Input (SpinBox) — Índice da câmera USB (0–10)  
   → **Função:** Define `streaming.usb_camera_index`; passado ao `cv2.VideoCapture(index)`; 0 = primeira câmera.
 
-- **2.2.5** URL (RTSP) — Input (LineEdit) — URL do stream RTSP  
-  → **Função:** Define `streaming.rtsp_url`; usado pelo `RTSPAdapter` para conectar a câmeras IP via RTSP.
-
-- **2.2.6** IP (GigE) — Input (LineEdit) — IP da câmera GigE  
+- **2.2.5** IP (GigE) — Input (LineEdit) — IP da câmera GigE  
   → **Função:** Define `streaming.gige_ip`; usado pelo `GigECameraAdapter` para conectar a câmeras GigE Vision.
 
-- **2.2.7** Porta (GigE) — Input (SpinBox) — Porta GigE (1–65535)  
+- **2.2.6** Porta (GigE) — Input (SpinBox) — Porta GigE (1–65535)  
   → **Função:** Define `streaming.gige_port`; porta de controle da câmera GigE (padrão 3956).
 
-- **2.2.8** Arquivo CTI (GenTL) — Display (read-only) — Caminho do arquivo CTI  
+- **2.2.7** Arquivo CTI (GenTL) — Display (read-only) — Caminho do arquivo CTI  
   → **Função:** Exibe `streaming.gentl_cti_path`; o driver GenTL (ex.: Omron Sentech) é carregado desse arquivo `.cti`.
 
-- **2.2.9** Procurar... (GenTL) — Botão — Seleciona arquivo CTI  
+- **2.2.8** Procurar... (GenTL) — Botão — Seleciona arquivo CTI  
   → **Função:** Abre diálogo para escolher o arquivo `.cti`; define `streaming.gentl_cti_path`.
 
-- **2.2.10** Índice da câmera (GenTL) — Input (SpinBox) — Índice na lista GenTL (0–10)  
+- **2.2.9** Índice da câmera (GenTL) — Input (SpinBox) — Índice na lista GenTL (0–10)  
   → **Função:** Define `streaming.gentl_device_index`; qual câmera na lista do Harvester (0 = primeira).
 
-- **2.2.11** Dimensão máx. (px) (GenTL) — Input (SpinBox) — Máximo do lado maior em pixels (0–4096)  
+- **2.2.10** Dimensão máx. (px) (GenTL) — Input (SpinBox) — Máximo do lado maior em pixels (0–4096)  
   → **Função:** Define `streaming.gentl_max_dimension`; redimensiona o frame para reduzir carga em câmeras de alta resolução; 0 = sem limite (com segurança 1920).
 
-- **2.2.12** FPS alvo (GenTL) — Input (DoubleSpinBox) — FPS alvo do stream (1–60)  
+- **2.2.11** FPS alvo (GenTL) — Input (DoubleSpinBox) — FPS alvo do stream (1–60)  
   → **Função:** Define `streaming.gentl_target_fps`; intervalo entre capturas no `StreamWorker`; valores menores reduzem carga em alta resolução.
 
-- **2.2.13** Tamanho máximo (Buffer) — Input (SpinBox) — Tamanho do buffer de frames (1–100)  
+- **2.2.12** Tamanho máximo (Buffer) — Input (SpinBox) — Tamanho do buffer de frames (1–100)  
   → **Função:** Define `streaming.max_frame_buffer_size`; tamanho do `FrameBuffer`; evita acúmulo excessivo quando a inferência é mais lenta que a captura.
 
 ### 2.3. Sub-aba: Detecção
@@ -221,7 +218,7 @@ Este documento lista todos os campos de **digitação** (input) e **exibição**
 
 ### 2.6. Sub-aba: Saída
 - **2.6.1** Habilitar stream para navegador — Input (CheckBox) — Liga/desliga stream HTTP MJPEG  
-  → **Função:** Define `output.rtsp_enabled`; quando True, inicia `MjpegServer` ao iniciar o sistema; permite visualizar o stream em um navegador (Chrome, Firefox, Edge).
+  → **Função:** Define `output.rtsp_enabled`; quando True, inicia `MjpegServer` ao iniciar o sistema; permite visualizar o stream em um navegador (Chrome, Firefox, Edge) via URL HTTP.
 
 - **2.6.2** Porta — Input (SpinBox) — Porta HTTP (1–65535)  
   → **Função:** Define `output.http_port`; porta do servidor MJPEG (padrão 8080); usada na URL do stream.

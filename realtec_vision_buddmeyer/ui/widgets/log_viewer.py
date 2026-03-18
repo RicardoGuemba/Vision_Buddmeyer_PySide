@@ -96,9 +96,9 @@ class LogViewer(QWidget):
         self._viewer.setFont(QFont("Consolas", 9))
         self._viewer.setStyleSheet("""
             QTextEdit {
-                background-color: #1a1a2e;
-                color: #e0e0e0;
-                border: 1px solid #2d3748;
+                background-color: #14284c;
+                color: #e5e7eb;
+                border: 1px solid #1b3a69;
                 border-radius: 4px;
             }
         """)
@@ -106,7 +106,7 @@ class LogViewer(QWidget):
         
         # Status
         self._status_label = QLabel()
-        self._status_label.setStyleSheet("color: #6c757d;")
+        self._status_label.setStyleSheet("color: #c5c9ce;")
         layout.addWidget(self._status_label)
     
     def _setup_watcher(self) -> None:
@@ -179,11 +179,11 @@ class LogViewer(QWidget):
         elif "WARNING" in line.upper():
             color = "#ffc107"
         elif "INFO" in line.upper():
-            color = "#17a2b8"
+            color = "#26477e"
         elif "DEBUG" in line.upper():
-            color = "#6c757d"
+            color = "#c5c9ce"
         else:
-            color = "#e0e0e0"
+            color = "#e5e7eb"
         
         return f'<span style="color: {color};">{line}</span>'
     

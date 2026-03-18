@@ -53,7 +53,7 @@ class VideoWidget(QWidget):
         """Configura a interface."""
         self.setMinimumSize(320, 240)
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
-        self.setStyleSheet("background-color: #1a1a2e;")
+        self.setStyleSheet("background-color: #14284c;")
         
         # Label para quando não há vídeo
         layout = QVBoxLayout(self)
@@ -63,7 +63,7 @@ class VideoWidget(QWidget):
         self._placeholder_label.setAlignment(Qt.AlignCenter)
         self._placeholder_label.setStyleSheet("""
             QLabel {
-                color: #6c757d;
+                color: #c5c9ce;
                 font-size: 16px;
                 font-weight: bold;
             }

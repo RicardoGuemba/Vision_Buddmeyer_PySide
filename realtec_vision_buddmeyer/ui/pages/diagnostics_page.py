@@ -41,8 +41,8 @@ class StatusCard(QFrame):
         
         self.setStyleSheet("""
             QFrame {
-                background-color: #1e2836;
-                border: 1px solid #3d4852;
+                background-color: #14284c;
+                border: 1px solid #1b3a69;
                 border-radius: 8px;
             }
         """)
@@ -55,22 +55,22 @@ class StatusCard(QFrame):
         # Título
         self._title = QLabel(title)
         self._title.setFont(QFont("Segoe UI", 10))
-        self._title.setStyleSheet("color: #adb5bd; border: none;")
+        self._title.setStyleSheet("color: #c5c9ce; border: none;")
         layout.addWidget(self._title)
         
         # Valor
         self._value = QLabel("---")
         self._value.setFont(QFont("Segoe UI", 24, QFont.Bold))
-        self._value.setStyleSheet("color: #00d4ff; border: none;")
+        self._value.setStyleSheet("color: #26477e; border: none;")
         layout.addWidget(self._value)
         
         # Status
         self._status = QLabel("")
         self._status.setFont(QFont("Segoe UI", 9))
-        self._status.setStyleSheet("color: #6c757d; border: none;")
+        self._status.setStyleSheet("color: #c5c9ce; border: none;")
         layout.addWidget(self._status)
     
-    def set_value(self, value: str, color: str = "#00d4ff") -> None:
+    def set_value(self, value: str, color: str = "#26477e") -> None:
         """Define o valor exibido."""
         self._value.setText(value)
         self._value.setStyleSheet(f"color: {color}; border: none;")
@@ -114,13 +114,13 @@ class DiagnosticsPage(QWidget):
         self._tabs = QTabWidget()
         self._tabs.setStyleSheet("""
             QTabWidget::pane {
-                border: 1px solid #3d4852;
+                border: 1px solid #1b3a69;
                 border-radius: 4px;
                 background-color: #1e2836;
             }
             QTabBar::tab {
-                background-color: #2d3748;
-                color: #e0e0e0;
+                background-color: #1b3a69;
+                color: #e5e7eb;
                 padding: 8px 16px;
                 margin-right: 2px;
                 border-top-left-radius: 4px;
@@ -128,7 +128,7 @@ class DiagnosticsPage(QWidget):
             }
             QTabBar::tab:selected {
                 background-color: #1e2836;
-                color: #00d4ff;
+                color: #26477e;
             }
         """)
         

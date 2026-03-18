@@ -134,7 +134,7 @@ Fonte de vídeo → StreamManager (QThread) → Frame Buffer
 - **Central:** `QTabWidget` com 3 abas (Operação, Configuração, Diagnósticos).
 - **Menu:** Arquivo (Salvar Config, Sair), Sistema (Iniciar F5, Parar F6, Recarregar Modelo), Ajuda (Sobre).
 - **Status bar:** Sistema (Rodando/Parado), FPS, CLP (Conectado/Desconectado/Simulado), timestamp; atualização por timer 500 ms.
-- **Tema:** `ui/styles/industrial.qss` (ou fallback inline escuro); cores industriais (#0f1419, #00d4ff, etc.).
+- **Tema:** `ui/styles/industrial.qss` (Manual de Marca RTC); paleta #1b3a69, #14284c, #26477e, #c5c9ce, #e5e7eb.
 
 ### 3.2 Aba Operação
 

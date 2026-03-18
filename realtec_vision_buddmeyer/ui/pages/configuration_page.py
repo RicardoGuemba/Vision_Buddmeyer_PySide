@@ -27,18 +27,18 @@ logger = get_logger("config")
 CONFIG_GROUP_STYLE = """
     QGroupBox {
         font-weight: bold;
-        color: #e0e0e0;
-        border: 1px solid #3d4852;
+        color: #e5e7eb;
+        border: 1px solid #1b3a69;
         border-radius: 6px;
         margin-top: 14px;
         padding: 12px 12px 12px 12px;
-        background-color: #1a2332;
+        background-color: #14284c;
     }
     QGroupBox::title {
         subcontrol-origin: margin;
         left: 12px;
         padding: 0 6px;
-        color: #00d4ff;
+        color: #26477e;
     }
 """
 
@@ -112,12 +112,12 @@ class ConfigurationPage(QWidget):
         self._tabs = QTabWidget()
         self._tabs.setStyleSheet("""
             QTabWidget::pane {
-                border: 1px solid #3d4852;
+                border: 1px solid #1b3a69;
                 border-radius: 4px;
-                background-color: #1e2836;
+                background-color: #14284c;
             }
             QTabBar::tab {
-                background-color: #2d3748;
+                background-color: #1b3a69;
                 color: #e0e0e0;
                 padding: 8px 16px;
                 margin-right: 2px;
@@ -125,8 +125,8 @@ class ConfigurationPage(QWidget):
                 border-top-right-radius: 4px;
             }
             QTabBar::tab:selected {
-                background-color: #1e2836;
-                color: #00d4ff;
+                background-color: #14284c;
+                color: #26477e;
             }
         """)
         

@@ -38,11 +38,11 @@ class EventEntry:
     def format_html(self) -> str:
         """Formata como HTML."""
         colors = {
-            EventLevel.INFO: "#17a2b8",
+            EventLevel.INFO: "#26477e",
             EventLevel.SUCCESS: "#28a745",
             EventLevel.WARNING: "#ffc107",
             EventLevel.ERROR: "#dc3545",
-            EventLevel.DEBUG: "#6c757d",
+            EventLevel.DEBUG: "#c5c9ce",
         }
         
         color = colors.get(self.level, "#ffffff")
@@ -50,10 +50,10 @@ class EventEntry:
         source_str = f"[{self.source}] " if self.source else ""
         
         return (
-            f'<span style="color: #6c757d;">{time_str}</span> '
+            f'<span style="color: #c5c9ce;">{time_str}</span> '
             f'<span style="color: {color}; font-weight: bold;">[{self.level.value}]</span> '
-            f'<span style="color: #adb5bd;">{source_str}</span>'
-            f'<span style="color: #e0e0e0;">{self.message}</span>'
+            f'<span style="color: #c5c9ce;">{source_str}</span>'
+            f'<span style="color: #e5e7eb;">{self.message}</span>'
         )
 
 
@@ -110,9 +110,9 @@ class EventConsole(QWidget):
         self._console.setMinimumHeight(100)
         self._console.setStyleSheet("""
             QTextEdit {
-                background-color: #1a1a2e;
-                color: #e0e0e0;
-                border: 1px solid #2d3748;
+                background-color: #14284c;
+                color: #e5e7eb;
+                border: 1px solid #1b3a69;
                 border-radius: 4px;
                 padding: 6px;
             }

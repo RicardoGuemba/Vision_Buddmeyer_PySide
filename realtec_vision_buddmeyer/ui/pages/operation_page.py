@@ -114,7 +114,7 @@ class OperationPage(QWidget):
         
         # Legenda da fonte atual (abaixo do vídeo)
         self._source_caption = QLabel()
-        self._source_caption.setStyleSheet("color: #8b9dc3; font-size: 11px; padding: 2px 0;")
+        self._source_caption.setStyleSheet("color: #c5c9ce; font-size: 11px; padding: 2px 0;")
         self._source_caption.setAlignment(Qt.AlignCenter)
         central_layout.addWidget(self._source_caption)
         
@@ -122,8 +122,8 @@ class OperationPage(QWidget):
         console_group = QGroupBox("Eventos")
         console_group.setStyleSheet("""
             QGroupBox {
-                color: #e0e0e0;
-                border: 1px solid #3d4852;
+                color: #e5e7eb;
+                border: 1px solid #1b3a69;
                 border-radius: 4px;
                 margin-top: 8px;
                 padding-top: 8px;
@@ -154,8 +154,8 @@ class OperationPage(QWidget):
         status_bar = QFrame()
         status_bar.setStyleSheet("""
             QFrame {
-                background-color: #252d3a;
-                border: 1px solid #3d4852;
+                background-color: #14284c;
+                border: 1px solid #1b3a69;
                 border-radius: 4px;
             }
         """)
@@ -163,10 +163,10 @@ class OperationPage(QWidget):
         status_bar_layout = QHBoxLayout(status_bar)
         status_bar_layout.setContentsMargins(12, 8, 12, 8)
         status_label = QLabel("Status atual:")
-        status_label.setStyleSheet("color: #adb5bd; font-size: 11px; font-weight: bold;")
+        status_label.setStyleSheet("color: #c5c9ce; font-size: 11px; font-weight: bold;")
         status_bar_layout.addWidget(status_label)
         self._status_step_label = QLabel("—")
-        self._status_step_label.setStyleSheet("color: #00d4ff; font-weight: bold; font-size: 11px;")
+        self._status_step_label.setStyleSheet("color: #26477e; font-weight: bold; font-size: 11px;")
         self._status_step_label.setWordWrap(True)
         status_bar_layout.addWidget(self._status_step_label, stretch=1)
         layout.addWidget(status_bar)
@@ -175,8 +175,8 @@ class OperationPage(QWidget):
         controls_frame = QFrame()
         controls_frame.setStyleSheet("""
             QFrame {
-                background-color: #1e2836;
-                border: 1px solid #2d3748;
+                background-color: #14284c;
+                border: 1px solid #1b3a69;
                 border-radius: 4px;
             }
         """)
@@ -283,7 +283,7 @@ class OperationPage(QWidget):
         # Separador visual
         sep = QFrame()
         sep.setFrameShape(QFrame.VLine)
-        sep.setStyleSheet("background-color: #3d4852;")
+        sep.setStyleSheet("background-color: #1b3a69;")
         controls_layout.addWidget(sep)
         
         # Autorizar envio ao CLP (modo manual, apos deteccao)
@@ -293,14 +293,14 @@ class OperationPage(QWidget):
         self._authorize_send_btn.setVisible(False)
         self._authorize_send_btn.setStyleSheet("""
             QPushButton {
-                background-color: #17a2b8;
+                background-color: #26477e;
                 color: white;
                 font-weight: bold;
                 padding: 8px 16px;
                 border-radius: 4px;
             }
             QPushButton:hover {
-                background-color: #138496;
+                background-color: #1b3a69;
             }
             QPushButton:disabled {
                 background-color: #6c757d;
@@ -325,14 +325,14 @@ class OperationPage(QWidget):
         self._new_cycle_btn.setEnabled(False)
         self._new_cycle_btn.setStyleSheet("""
             QPushButton {
-                background-color: #007bff;
+                background-color: #26477e;
                 color: white;
                 font-weight: bold;
                 padding: 8px 16px;
                 border-radius: 4px;
             }
             QPushButton:hover {
-                background-color: #0069d9;
+                background-color: #1b3a69;
             }
             QPushButton:disabled {
                 background-color: #6c757d;

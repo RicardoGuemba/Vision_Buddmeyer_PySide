@@ -83,7 +83,8 @@ Inclui testes unitários (config, settings, widgets) e funcionais (inicializaç�
 
 ## 📖 Documentação
 
-- **[docs/DOCUMENTACAO_COMPLETA.md](docs/DOCUMENTACAO_COMPLETA.md)** – documentação principal: visão geral, features, UI, arquitetura, manual de manutenção e contrato de TAGs CLP.
+- **[docs/USO_E_ABAS.md](docs/USO_E_ABAS.md)** – **tutorial de uso**: guia das abas Operação, Configuração e Diagnósticos.
+- **[docs/DOCUMENTACAO_COMPLETA.md](docs/DOCUMENTACAO_COMPLETA.md)** – documentação técnica: visão geral, features, UI, arquitetura, manual de manutenção e contrato de TAGs CLP.
 - **[docs/MACOS_SETUP.md](docs/MACOS_SETUP.md)** – instalação e uso no macOS.
 - **[docs/UBUNTU_SETUP.md](docs/UBUNTU_SETUP.md)** – instalação e uso no Ubuntu.
 - **[docs/MANUAL_GENTL(GIGE).md](docs/MANUAL_GENTL(GIGE).md)** – câmeras GigE/GenTL.

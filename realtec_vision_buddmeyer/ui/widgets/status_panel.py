@@ -33,23 +33,23 @@ class StatusIndicator(QFrame):
         self._led.setFixedSize(12, 12)
         self._led.setStyleSheet("""
             QLabel {
-                background-color: #6c757d;
+                background-color: #c5c9ce;
                 border-radius: 6px;
-                border: 1px solid #495057;
+                border: 1px solid #1b3a69;
             }
         """)
         layout.addWidget(self._led)
         
         # Label
         self._label = QLabel(label)
-        self._label.setStyleSheet("color: #e0e0e0;")
+        self._label.setStyleSheet("color: #e5e7eb;")
         layout.addWidget(self._label)
         
         layout.addStretch()
         
         # Status
         self._status_label = QLabel("---")
-        self._status_label.setStyleSheet("color: #adb5bd; font-size: 11px;")
+        self._status_label.setStyleSheet("color: #c5c9ce; font-size: 11px;")
         layout.addWidget(self._status_label)
     
     def set_status(self, status: str, color: str = "gray") -> None:
@@ -60,8 +60,8 @@ class StatusIndicator(QFrame):
             "green": "#28a745",
             "yellow": "#ffc107",
             "red": "#dc3545",
-            "blue": "#007bff",
-            "gray": "#6c757d",
+            "blue": "#26477e",
+            "gray": "#c5c9ce",
         }
         
         led_color = colors.get(color, colors["gray"])
@@ -102,22 +102,22 @@ class StatusPanel(QWidget):
         # Título
         title = QLabel("STATUS DO SISTEMA")
         title.setFont(QFont("Segoe UI", 12, QFont.Bold))
-        title.setStyleSheet("color: #00d4ff;")
+        title.setStyleSheet("color: #26477e;")
         title.setAlignment(Qt.AlignCenter)
         layout.addWidget(title)
         
         # Separador
         separator = QFrame()
         separator.setFrameShape(QFrame.HLine)
-        separator.setStyleSheet("background-color: #2d3748;")
+        separator.setStyleSheet("background-color: #1b3a69;")
         layout.addWidget(separator)
         
         # Status do Sistema
         system_group = QGroupBox("Sistema")
         system_group.setStyleSheet("""
             QGroupBox {
-                color: #e0e0e0;
-                border: 1px solid #3d4852;
+                color: #e5e7eb;
+                border: 1px solid #1b3a69;
                 border-radius: 4px;
                 margin-top: 8px;
                 padding-top: 8px;
@@ -163,7 +163,7 @@ class StatusPanel(QWidget):
         
         plc_layout.addWidget(QLabel("Latência CIP:"))
         self._latency_ms = QLabel("— ms")
-        self._latency_ms.setStyleSheet("color: #00d4ff; font-size: 11px;")
+        self._latency_ms.setStyleSheet("color: #26477e; font-size: 11px;")
         plc_layout.addWidget(self._latency_ms)
         
         layout.addWidget(plc_group)
@@ -175,7 +175,7 @@ class StatusPanel(QWidget):
         
         detection_layout.addWidget(QLabel("Classe:"), 0, 0)
         self._det_class = QLabel("---")
-        self._det_class.setStyleSheet("color: #00d4ff; font-weight: bold; font-size: 11px;")
+        self._det_class.setStyleSheet("color: #26477e; font-weight: bold; font-size: 11px;")
         detection_layout.addWidget(self._det_class, 0, 1)
         
         detection_layout.addWidget(QLabel("Confiança:"), 1, 0)
@@ -185,12 +185,12 @@ class StatusPanel(QWidget):
         
         detection_layout.addWidget(QLabel("Centroide X:"), 2, 0)
         self._det_x = QLabel("---")
-        self._det_x.setStyleSheet("color: #e0e0e0; font-size: 11px;")
+        self._det_x.setStyleSheet("color: #e5e7eb; font-size: 11px;")
         detection_layout.addWidget(self._det_x, 2, 1)
         
         detection_layout.addWidget(QLabel("Centroide Y:"), 3, 0)
         self._det_y = QLabel("---")
-        self._det_y.setStyleSheet("color: #e0e0e0; font-size: 11px;")
+        self._det_y.setStyleSheet("color: #e5e7eb; font-size: 11px;")
         detection_layout.addWidget(self._det_y, 3, 1)
         
         layout.addWidget(detection_group)
