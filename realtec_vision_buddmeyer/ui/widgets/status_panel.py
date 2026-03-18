@@ -14,6 +14,7 @@ from PySide6.QtGui import QFont, QColor
 
 from detection.events import DetectionEvent
 from communication.connection_state import ConnectionState, ConnectionStatus
+from config.settings import get_settings
 from control.robot_controller import RobotControlState
 
 
@@ -287,12 +288,17 @@ class StatusPanel(QWidget):
     
     @Slot(object)
     def update_detection(self, event: DetectionEvent) -> None:
-        """Atualiza informações da detecção."""
+        """Atualiza informações da detecção (centroide em px ou mm conforme calibração)."""
         if event.detected:
             self._det_class.setText(event.class_name)
             self._det_confidence.setText(f"{event.confidence:.1%}")
-            self._det_x.setText(f"{event.centroid[0]:.1f}")
-            self._det_y.setText(f"{event.centroid[1]:.1f}")
+            cx_px, cy_px = event.centroid[0], event.centroid[1]
+            mm_per_px = getattr(
+                get_settings().preprocess, "roi_calibration_mm_per_px", 1.0
+            ) or 1.0
+            cx, cy = cx_px * mm_per_px, cy_px * mm_per_px
+            self._det_x.setText(f"{cx:.1f}")
+            self._det_y.setText(f"{cy:.1f}")
         else:
             self._det_class.setText("---")
             self._det_confidence.setText("---")

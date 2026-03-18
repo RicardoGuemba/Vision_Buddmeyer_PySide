@@ -188,16 +188,6 @@ class ConfigurationPage(QWidget):
         
         layout.addWidget(self._usb_group)
         
-        self._rtsp_group = QGroupBox("Stream RTSP")
-        self._rtsp_group.setStyleSheet(CONFIG_GROUP_STYLE)
-        rtsp_layout = QFormLayout(self._rtsp_group)
-        
-        self._rtsp_url = QLineEdit()
-        self._rtsp_url.setPlaceholderText("rtsp://...")
-        rtsp_layout.addRow("URL:", self._rtsp_url)
-        
-        layout.addWidget(self._rtsp_group)
-        
         self._gige_group = QGroupBox("Câmera GigE")
         self._gige_group.setStyleSheet(CONFIG_GROUP_STYLE)
         gige_layout = QFormLayout(self._gige_group)
@@ -323,20 +313,8 @@ class ConfigurationPage(QWidget):
         
         roi_group = QGroupBox("ROI (Região de Interesse)")
         roi_group.setStyleSheet(CONFIG_GROUP_STYLE)
-        roi_group.setToolTip("Define a região da imagem usada na detecção. Na aba Operação você só liga/desliga.")
+        roi_group.setToolTip("Define a região da imagem usada na detecção. Sempre em pixels.")
         roi_layout = QFormLayout(roi_group)
-
-        self._roi_unit_combo = QComboBox()
-        self._roi_unit_combo.addItems(["px", "mm"])
-        self._roi_unit_combo.currentTextChanged.connect(self._on_roi_unit_changed)
-        roi_layout.addRow("Unidade:", self._roi_unit_combo)
-
-        self._roi_calibration = QDoubleSpinBox()
-        self._roi_calibration.setRange(0.1, 1000.0)
-        self._roi_calibration.setValue(10.0)
-        self._roi_calibration.setSuffix(" px/mm")
-        self._roi_calibration.setToolTip("Calibração: pixels por mm (usado quando unidade=mm)")
-        roi_layout.addRow("Calibração:", self._roi_calibration)
 
         roi_coords = QHBoxLayout()
         self._roi_x = QDoubleSpinBox()
@@ -363,13 +341,22 @@ class ConfigurationPage(QWidget):
         roi_coords.addWidget(self._roi_w)
         roi_coords.addWidget(QLabel("H:"))
         roi_coords.addWidget(self._roi_h)
-        roi_layout.addRow("Coordenadas (x, y, largura, altura):", roi_coords)
+        roi_layout.addRow("Coordenadas (x, y, largura, altura) [px]:", roi_coords)
 
         roi_default_btn = QPushButton("Padrão (25% área central)")
         roi_default_btn.setToolTip("Define ROI como 25% da área centralizada (ex.: 640x480)")
         roi_default_btn.clicked.connect(self._set_default_roi)
         roi_layout.addRow("", roi_default_btn)
-        
+
+        self._centroid_mm_per_px = QDoubleSpinBox()
+        self._centroid_mm_per_px.setRange(0.0001, 10000.0)
+        self._centroid_mm_per_px.setValue(1.0)
+        self._centroid_mm_per_px.setSuffix(" mm/px")
+        self._centroid_mm_per_px.setToolTip(
+            "Relação mm/px aplicada ao centroide (X,Y) da detecção. Default 1. Ex.: 100 → coord_mm = px * 100"
+        )
+        roi_layout.addRow("Centroide (mm/px):", self._centroid_mm_per_px)
+
         layout.addWidget(roi_group)
         
         profile_group = QGroupBox("Perfil de Imagem")
@@ -386,20 +373,14 @@ class ConfigurationPage(QWidget):
         layout.addStretch()
         return widget
     
-    def _on_roi_unit_changed(self, unit: str) -> None:
-        """Atualiza visibilidade da calibração e sufixos."""
-        self._roi_calibration.setVisible(unit == "mm")
-
     def _set_default_roi(self) -> None:
-        """Aplica ROI padrão (25% da área centralizada)."""
+        """Aplica ROI padrão (25% da área centralizada) em pixels."""
         from config.settings import DEFAULT_ROI_QUARTER_AREA
         x, y, w, h = DEFAULT_ROI_QUARTER_AREA
-        unit = self._roi_unit_combo.currentText()
-        cal = self._roi_calibration.value() if unit == "mm" else 1.0
-        self._roi_x.setValue(x / cal if unit == "mm" else x)
-        self._roi_y.setValue(y / cal if unit == "mm" else y)
-        self._roi_w.setValue(w / cal if unit == "mm" else w)
-        self._roi_h.setValue(h / cal if unit == "mm" else h)
+        self._roi_x.setValue(x)
+        self._roi_y.setValue(y)
+        self._roi_w.setValue(w)
+        self._roi_h.setValue(h)
     
     def _create_plc_tab(self) -> QWidget:
         """Cria aba de configuração do CLP."""
@@ -468,7 +449,7 @@ class ConfigurationPage(QWidget):
         return widget
     
     def _create_output_tab(self) -> QWidget:
-        """Aba Saída: servidor HTTP MJPEG com URL copiável para navegador."""
+        """Aba Saída: servidor HTTP MJPEG – copie a URL e cole no navegador."""
         widget = QWidget()
         layout = QVBoxLayout(widget)
         layout.setSpacing(16)
@@ -478,36 +459,20 @@ class ConfigurationPage(QWidget):
         stream_layout = QFormLayout(stream_group)
         
         self._rtsp_enabled = QCheckBox("Habilitar stream para navegador")
-        self._rtsp_enabled.toggled.connect(self._update_stream_url_display)
         stream_layout.addRow("", self._rtsp_enabled)
         
         self._http_port = QSpinBox()
         self._http_port.setRange(1, 65535)
         self._http_port.setValue(8080)
-        self._http_port.valueChanged.connect(self._update_stream_url_display)
         stream_layout.addRow("Porta:", self._http_port)
         
-        self._http_path = QLineEdit()
-        self._http_path.setText("/stream")
-        self._http_path.textChanged.connect(self._update_stream_url_display)
-        stream_layout.addRow("Path:", self._http_path)
-        
-        url_layout = QHBoxLayout()
-        self._stream_url_display = QLineEdit()
-        self._stream_url_display.setReadOnly(True)
-        self._stream_url_display.setPlaceholderText("http://IP:porta/stream")
-        self._stream_url_display.setStyleSheet(
-            "QLineEdit { background-color: #252d3a; color: #00d4ff; font-family: monospace; }"
-        )
-        url_layout.addWidget(self._stream_url_display)
         copy_btn = QPushButton("Copiar URL")
-        copy_btn.setToolTip("Copia a URL para a área de transferência")
+        copy_btn.setToolTip("Copia a URL para a área de transferência. Cole na barra de endereços do navegador.")
         copy_btn.clicked.connect(self._copy_stream_url)
-        url_layout.addWidget(copy_btn)
-        stream_layout.addRow("URL (copiar/colar no navegador):", url_layout)
+        stream_layout.addRow("", copy_btn)
         
         url_help = QLabel(
-            "Cole a URL na barra de endereços do Chrome, Firefox ou Edge para visualizar o stream."
+            "Clique em 'Copiar URL' e cole na barra de endereços do Chrome, Firefox ou Edge."
         )
         url_help.setStyleSheet("color: #8b9dc3; font-size: 11px;")
         url_help.setWordWrap(True)
@@ -518,25 +483,21 @@ class ConfigurationPage(QWidget):
         
         return widget
     
-    def _update_stream_url_display(self) -> None:
-        """Atualiza o campo de exibição da URL HTTP."""
+    def _get_stream_url(self) -> str:
+        """Retorna a URL do stream HTTP (IP:porta/stream)."""
         port = self._http_port.value()
-        path = (self._http_path.text() or "/stream").strip()
-        if not path.startswith("/"):
-            path = "/" + path
         host = get_local_ip()
-        self._stream_url_display.setText(f"http://{host}:{port}{path}")
-    
+        return f"http://{host}:{port}/stream"
+
     def _copy_stream_url(self) -> None:
         """Copia a URL HTTP para a área de transferência."""
-        url = self._stream_url_display.text()
-        if url:
-            clipboard = QApplication.clipboard()
-            clipboard.setText(url)
-            QMessageBox.information(
-                self, "Copiado",
-                f"URL copiada para a área de transferência:\n{url}"
-            )
+        url = self._get_stream_url()
+        clipboard = QApplication.clipboard()
+        clipboard.setText(url)
+        QMessageBox.information(
+            self, "Copiado",
+            f"URL copiada para a área de transferência:\n{url}\n\nCole na barra de endereços do navegador."
+        )
     
     def _load_settings(self) -> None:
         """Carrega configurações atuais."""
@@ -546,7 +507,6 @@ class ConfigurationPage(QWidget):
         self._video_path.setText(s.streaming.video_path)
         self._loop_video.setChecked(s.streaming.loop_video)
         self._usb_index.setValue(s.streaming.usb_camera_index)
-        self._rtsp_url.setText(s.streaming.rtsp_url)
         self._gige_ip.setText(s.streaming.gige_ip)
         self._gige_port.setValue(s.streaming.gige_port)
         self._gentl_cti_path.setText(s.streaming.gentl_cti_path)
@@ -563,23 +523,20 @@ class ConfigurationPage(QWidget):
         self._max_detections.setValue(s.detection.max_detections)
         self._inference_fps.setValue(s.detection.inference_fps)
         
-        # Imagem (ROI e perfil)
-        self._roi_unit_combo.setCurrentText(getattr(s.preprocess, "roi_unit", "px") or "px")
-        self._roi_calibration.setValue(getattr(s.preprocess, "roi_calibration_px_per_mm", 10.0))
-        self._roi_calibration.setVisible(self._roi_unit_combo.currentText() == "mm")
-
+        # Imagem (ROI em px, calibração centroide mm/px)
         if s.preprocess.roi and len(s.preprocess.roi) == 4:
             px_vals = [float(s.preprocess.roi[i]) for i in range(4)]
         else:
             from config.settings import DEFAULT_ROI_QUARTER_AREA
             px_vals = list(DEFAULT_ROI_QUARTER_AREA)
 
-        unit = self._roi_unit_combo.currentText()
-        cal = self._roi_calibration.value() if unit == "mm" else 1.0
-        self._roi_x.setValue(px_vals[0] / cal if unit == "mm" else px_vals[0])
-        self._roi_y.setValue(px_vals[1] / cal if unit == "mm" else px_vals[1])
-        self._roi_w.setValue(px_vals[2] / cal if unit == "mm" else px_vals[2])
-        self._roi_h.setValue(px_vals[3] / cal if unit == "mm" else px_vals[3])
+        self._roi_x.setValue(px_vals[0])
+        self._roi_y.setValue(px_vals[1])
+        self._roi_w.setValue(px_vals[2])
+        self._roi_h.setValue(px_vals[3])
+        self._centroid_mm_per_px.setValue(
+            getattr(s.preprocess, "roi_calibration_mm_per_px", 1.0)
+        )
         self._profile_combo.setCurrentText(s.preprocess.profile)
         
         # CLP
@@ -594,8 +551,6 @@ class ConfigurationPage(QWidget):
         # Output
         self._rtsp_enabled.setChecked(s.output.rtsp_enabled)
         self._http_port.setValue(s.output.http_port)
-        self._http_path.setText(s.output.http_path)
-        self._update_stream_url_display()
     
     def _save_settings(self) -> None:
         """Salva configurações."""
@@ -605,7 +560,6 @@ class ConfigurationPage(QWidget):
         s.streaming.video_path = self._video_path.text()
         s.streaming.loop_video = self._loop_video.isChecked()
         s.streaming.usb_camera_index = self._usb_index.value()
-        s.streaming.rtsp_url = self._rtsp_url.text()
         s.streaming.gige_ip = self._gige_ip.text()
         s.streaming.gige_port = self._gige_port.value()
         s.streaming.gentl_cti_path = self._gentl_cti_path.text()
@@ -622,19 +576,15 @@ class ConfigurationPage(QWidget):
         s.detection.max_detections = self._max_detections.value()
         s.detection.inference_fps = self._inference_fps.value()
         
-        # Imagem (ROI e perfil) - sempre salva em px
-        unit = self._roi_unit_combo.currentText()
-        cal = self._roi_calibration.value() if unit == "mm" else 1.0
-        mult = cal if unit == "mm" else 1.0
+        # Imagem (ROI em px, calibração centroide mm/px)
         px_vals = [
-            int(round(self._roi_x.value() * mult)),
-            int(round(self._roi_y.value() * mult)),
-            max(1, int(round(self._roi_w.value() * mult))),
-            max(1, int(round(self._roi_h.value() * mult))),
+            int(round(self._roi_x.value())),
+            int(round(self._roi_y.value())),
+            max(1, int(round(self._roi_w.value()))),
+            max(1, int(round(self._roi_h.value()))),
         ]
         s.preprocess.roi = px_vals
-        s.preprocess.roi_unit = unit
-        s.preprocess.roi_calibration_px_per_mm = self._roi_calibration.value()
+        s.preprocess.roi_calibration_mm_per_px = self._centroid_mm_per_px.value()
         s.preprocess.profile = self._profile_combo.currentText()
         
         # CLP
@@ -649,7 +599,7 @@ class ConfigurationPage(QWidget):
         # Output
         s.output.rtsp_enabled = self._rtsp_enabled.isChecked()
         s.output.http_port = self._http_port.value()
-        s.output.http_path = self._http_path.text()
+        s.output.http_path = "/stream"
         
         # Salva em arquivo
         config_path = Path(__file__).parent.parent.parent / "config" / "config.yaml"

@@ -55,13 +55,11 @@ class TestConfigurationPage:
         assert "border" in CONFIG_GROUP_STYLE
         assert "background-color" in CONFIG_GROUP_STYLE
 
-    def test_output_tab_has_url_and_copy(self, config_page):
-        """Aba Saída exibe URL HTTP e botão Copiar."""
-        assert config_page._stream_url_display is not None
-        assert config_page._stream_url_display.isReadOnly()
-        url_text = config_page._stream_url_display.text()
-        assert url_text.startswith("http://")
-        assert "/stream" in url_text
+    def test_output_tab_has_copy_url(self, config_page):
+        """Aba Saída tem botão Copiar URL que gera URL HTTP válida."""
+        url = config_page._get_stream_url()
+        assert url.startswith("http://")
+        assert "/stream" in url
 
     def test_copy_stream_url_to_clipboard(self, config_page):
         """Copiar URL cola conteúdo HTTP válido na área de transferência."""
@@ -79,3 +77,20 @@ class TestConfigurationPage:
         assert config_page._roi_y is not None
         assert config_page._roi_w is not None
         assert config_page._roi_h is not None
+
+    def test_roi_in_pixels(self, config_page):
+        """ROI é sempre em pixels; coordenadas X,Y,W,H são inteiros."""
+        config_page._tabs.setCurrentIndex(2)  # Aba Imagem
+        config_page._roi_x.setValue(100)
+        config_page._roi_y.setValue(50)
+        config_page._roi_w.setValue(200)
+        config_page._roi_h.setValue(200)
+        assert config_page._roi_x.value() == 100
+        assert config_page._roi_y.value() == 50
+
+    def test_centroid_mm_per_px_accepts_values(self, config_page):
+        """Centroide (mm/px) aceita valores; default 1; 100 multiplica px por 100."""
+        config_page._tabs.setCurrentIndex(2)
+        assert config_page._centroid_mm_per_px.value() == pytest.approx(1.0)
+        config_page._centroid_mm_per_px.setValue(100.0)
+        assert config_page._centroid_mm_per_px.value() == pytest.approx(100.0)

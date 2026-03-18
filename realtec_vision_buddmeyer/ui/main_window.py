@@ -448,7 +448,7 @@ class MainWindow(QMainWindow):
     
     def _confirm_and_exit(self) -> None:
         """Sair do sistema (menu Arquivo → Sair ou Ctrl+Q)."""
-        if self._stream_manager.is_running:
+        if self._operation_page._stream_manager.is_running:
             reply = QMessageBox.question(
                 self,
                 "Confirmar Saída",
@@ -457,16 +457,21 @@ class MainWindow(QMainWindow):
                 QMessageBox.No,
             )
             if reply == QMessageBox.Yes:
-                self._operation_page._stop_system()
-                QTimer.singleShot(100, self.close)
+                # Defer shutdown para próxima iteração do event loop (evita travamento)
+                QTimer.singleShot(0, self._do_stop_and_exit)
             else:
                 pass
         else:
             self.close()
+
+    def _do_stop_and_exit(self) -> None:
+        """Para o sistema e fecha a janela (executado em timer para não bloquear UI)."""
+        self._operation_page._stop_system()
+        QTimer.singleShot(150, self.close)
     
     def closeEvent(self, event) -> None:
         """Evento de fechamento."""
-        if self._stream_manager.is_running:
+        if self._operation_page._stream_manager.is_running:
             reply = QMessageBox.question(
                 self,
                 "Confirmar Saída",
@@ -475,11 +480,19 @@ class MainWindow(QMainWindow):
                 QMessageBox.No,
             )
             if reply == QMessageBox.Yes:
-                self._operation_page._stop_system()
-                event.accept()
+                event.ignore()
+                QTimer.singleShot(0, self._do_stop_and_close_event)
             else:
                 event.ignore()
         else:
             event.accept()
-        
-        logger.info("application_closed")
+            logger.info("application_closed")
+
+    def _do_stop_and_close_event(self) -> None:
+        """Para o sistema e fecha a janela (para closeEvent)."""
+        self._operation_page._stop_system()
+        QTimer.singleShot(150, self._close_after_stop)
+
+    def _close_after_stop(self) -> None:
+        """Fecha a janela após parada."""
+        self.close()

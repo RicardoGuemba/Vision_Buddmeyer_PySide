@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Optional, List, Dict, Any
 
 import yaml
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -72,7 +72,20 @@ class PreprocessSettings(BaseModel):
     contrast: float = Field(default=0.0, ge=-1.0, le=1.0, description="Ajuste de contraste")
     roi: Optional[List[int]] = Field(default=None, description="ROI [x, y, width, height] em px")
     roi_unit: str = Field(default="px", description="Unidade ROI: px ou mm")
-    roi_calibration_px_per_mm: float = Field(default=10.0, ge=0.1, description="Calibração px/mm (quando unidade=mm)")
+    roi_calibration_mm_per_px: float = Field(
+        default=1.0, ge=0.0001, description="Calibração mm/px: multiplica pixels para obter mm (default 1)"
+    )
+
+    @model_validator(mode="before")
+    @classmethod
+    def _migrate_px_per_mm(cls, data: object) -> object:
+        """Migra roi_calibration_px_per_mm (legado) para roi_calibration_mm_per_px."""
+        if isinstance(data, dict) and "roi_calibration_px_per_mm" in data:
+            data = dict(data)
+            px_per_mm = float(data.pop("roi_calibration_px_per_mm"))
+            if "roi_calibration_mm_per_px" not in data:
+                data["roi_calibration_mm_per_px"] = 1.0 / px_per_mm if px_per_mm else 1.0
+        return data
 
 
 class CIPSettings(BaseModel):

@@ -25,12 +25,12 @@ preprocess:
   brightness: 0.0
   contrast: 0.0
   roi:
-  - 60
-  - 20
-  - 20
-  - 40
-  roi_unit: mm
-  roi_calibration_px_per_mm: 1.0
+  - 181
+  - 101
+  - 277
+  - 277
+  roi_unit: px
+  roi_calibration_mm_per_px: 1.0
 cip:
   ip: 187.99.124.229
   port: 44818
@@ -46,6 +46,8 @@ robot_control:
   ack_timeout: 5.0
   pick_timeout: 30.0
   place_timeout: 30.0
+  authorization_timeout: 30.0
+  bypass_authorization: false
 tags:
   VisionReady: VisionCtrl_VisionReady
   VisionBusy: VisionCtrl_VisionBusy

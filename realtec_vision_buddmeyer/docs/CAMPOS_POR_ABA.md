@@ -182,19 +182,16 @@ Este documento lista todos os campos de **digitação** (input) e **exibição**
   → **Função:** Define `detection.inference_fps`; intervalo entre inferências no `InferenceWorker`; controla carga da GPU/CPU vs. latência.
 
 ### 2.4. Sub-aba: Imagem
-- **2.4.1** Unidade (ROI) — Input (Combo) — px ou mm  
-  → **Função:** Define `preprocess.roi_unit`; px = coordenadas em pixels; mm = coordenadas em mm (usa calibração para converter); afeta exibição e salvamento das coordenadas.
+- **2.4.1** Coordenadas X, Y, W, H (ROI) — Input (DoubleSpinBox) — x, y, largura, altura [px]  
+  → **Função:** Define `preprocess.roi`; região [x, y, largura, altura] em pixels; usada pelo `ROIManager` e `PreprocessPipeline` para recortar a imagem antes da detecção.
 
-- **2.4.2** Calibração (ROI) — Input (DoubleSpinBox) — px/mm (visível só quando unidade=mm)  
-  → **Função:** Define `preprocess.roi_calibration_px_per_mm`; pixels por mm; usado para converter ROI de mm para px ao salvar; visível só quando unidade=mm.
+- **2.4.2** Centroide (mm/px) — Input (DoubleSpinBox) — mm/px (default 1)  
+  → **Função:** Define `preprocess.roi_calibration_mm_per_px`; relação mm/px aplicada ao X,Y do centroide da detecção; coord_mm = coord_px * mm_per_px; ex.: 100 → px*100; usado na exibição e no envio ao CLP.
 
-- **2.4.3** Coordenadas X, Y, W, H (ROI) — Input (DoubleSpinBox) — x, y, largura, altura  
-  → **Função:** Define `preprocess.roi`; região [x, y, largura, altura] usada pelo `ROIManager` e `PreprocessPipeline` para recortar a imagem antes da detecção; reduz área processada e foca na zona de interesse.
+- **2.4.3** Padrão (25% área central) — Botão — Aplica ROI padrão  
+  → **Função:** Chama `_set_default_roi`; aplica `DEFAULT_ROI_QUARTER_AREA` (ex.: 181, 101, 277, 277) em pixels.
 
-- **2.4.4** Padrão (25% área central) — Botão — Aplica ROI padrão  
-  → **Função:** Chama `_set_default_roi`; aplica `DEFAULT_ROI_QUARTER_AREA` (ex.: 181, 101, 277, 277); define ROI como 25% da área centralizada.
-
-- **2.4.5** Perfil — Input (Combo) — default, bright, dark, high_contrast, low_contrast, enhanced, smooth, sharp  
+- **2.4.4** Perfil — Input (Combo) — default, bright, dark, high_contrast, low_contrast, enhanced, smooth, sharp  
   → **Função:** Define `preprocess.profile`; aplica perfil de brilho/contraste em `PreprocessPipeline`; cada perfil tem brightness/contrast pré-definidos em `PREPROCESS_PROFILES`.
 
 ### 2.5. Sub-aba: CLP

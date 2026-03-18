@@ -192,7 +192,6 @@ class OperationPage(QWidget):
         self._source_combo.addItems([
             "Arquivo de Vídeo",
             "Câmera USB",
-            "Stream RTSP",
             "Câmera GigE",
             "Câmera GenTL (Omron Sentech)",
         ])
@@ -375,6 +374,12 @@ class OperationPage(QWidget):
             x, y, w, h = DEFAULT_ROI_QUARTER_AREA
             self._status_panel.set_roi(True, x, y, w, h)
             s.roi = list(DEFAULT_ROI_QUARTER_AREA)  # aplica em memória para pipeline
+        self._refresh_centroid_display()
+
+    def _refresh_centroid_display(self) -> None:
+        """Atualiza exibição do centroide no painel (usa calibração atual)."""
+        if self._last_best_detection is not None:
+            self._status_panel.update_detection(self._last_best_detection)
     
     def _on_roi_changed(self) -> None:
         """Atualiza settings quando ROI muda (persistência via Salvar Config)."""
@@ -383,14 +388,14 @@ class OperationPage(QWidget):
     
     def _sync_combo_to_settings(self) -> None:
         """Sincroniza o combo de fonte com o source_type do settings."""
-        source_type_map = {"video": 0, "usb": 1, "rtsp": 2, "gige": 3, "gentl": 4}
+        source_type_map = {"video": 0, "usb": 1, "gige": 2, "gentl": 3}
         current_source = self._settings.streaming.source_type
         combo_index = source_type_map.get(current_source, 1)  # 1 = usb como padrão
         self._source_combo.setCurrentIndex(combo_index)
         # Atualiza visibilidade dos botões de seleção (vídeo vs GenTL)
         self._source_path_btn.setVisible(combo_index == 0)
-        self._gentl_cti_btn.setVisible(combo_index == 4)
-        self._gentl_settings_btn.setVisible(combo_index == 4)
+        self._gentl_cti_btn.setVisible(combo_index == 3)
+        self._gentl_settings_btn.setVisible(combo_index == 3)
         self._update_source_caption()
     
     def _update_source_caption(self) -> None:
@@ -404,8 +409,6 @@ class OperationPage(QWidget):
             cam = self._settings.streaming.usb_camera_index
             self._source_caption.setText(f"Fonte: Câmera USB (índice {cam})")
         elif idx == 2:
-            self._source_caption.setText("Fonte: Stream RTSP")
-        elif idx == 3:
             self._source_caption.setText("Fonte: Câmera GigE")
         else:
             cti = (self._settings.streaming.gentl_cti_path or "").strip()
@@ -468,8 +471,8 @@ class OperationPage(QWidget):
             return
         
         # Determina fonte selecionada na UI
-        source_types = ["video", "usb", "rtsp", "gige", "gentl"]
-        source_labels = ["Arquivo de Vídeo", "Câmera USB", "Stream RTSP", "Câmera GigE", "Câmera GenTL (Omron Sentech)"]
+        source_types = ["video", "usb", "gige", "gentl"]
+        source_labels = ["Arquivo de Vídeo", "Câmera USB", "Câmera GigE", "Câmera GenTL (Omron Sentech)"]
         source_index = self._source_combo.currentIndex()
         source_type = source_types[source_index]
         
@@ -565,11 +568,6 @@ class OperationPage(QWidget):
             self._stream_manager.change_source(
                 source_type=source_type,
                 camera_index=self._settings.streaming.usb_camera_index,
-            )
-        elif source_type == "rtsp":
-            self._stream_manager.change_source(
-                source_type=source_type,
-                rtsp_url=self._settings.streaming.rtsp_url,
             )
         elif source_type == "gige":
             self._stream_manager.change_source(
@@ -774,10 +772,17 @@ class OperationPage(QWidget):
             return
         
         detection = self._last_best_detection
-        centroid_x = detection.centroid[0]
-        centroid_y = detection.centroid[1]
+        centroid_x_px = detection.centroid[0]
+        centroid_y_px = detection.centroid[1]
         confidence = detection.confidence
-        
+
+        # Aplica mm/px ao centroide: coord_mm = coord_px * mm_per_px
+        mm_per_px = getattr(
+            self._settings.preprocess, "roi_calibration_mm_per_px", 1.0
+        ) or 1.0
+        centroid_x = centroid_x_px * mm_per_px
+        centroid_y = centroid_y_px * mm_per_px
+
         # Log da comunicação
         self._logger.info(
             "communicating_centroid_to_plc",
@@ -912,18 +917,14 @@ class OperationPage(QWidget):
         self._status_panel.set_system_status("STOPPED")
 
     def _run_shutdown_plc_sync(self) -> None:
-        """Executa desconexão do CLP de forma síncrona (evita falhas ao sair)."""
-        from PySide6.QtCore import QEventLoop, QTimer
-
+        """Executa desconexão do CLP sem bloquear (evita deadlock ao sair)."""
         try:
             loop = asyncio.get_event_loop()
             if not loop.is_running():
                 return
-            future = asyncio.ensure_future(self._shutdown_plc_connection())
-            nested = QEventLoop()
-            future.add_done_callback(lambda _: nested.quit())
-            QTimer.singleShot(5000, nested.quit)
-            nested.exec()
+            # Fire-and-forget: agenda desconexão sem esperar (evita nested.exec() que
+            # causava travamento ao clicar em Sair)
+            asyncio.ensure_future(self._shutdown_plc_connection())
         except RuntimeError:
             pass
         except Exception as e:
@@ -978,8 +979,8 @@ class OperationPage(QWidget):
     def _on_source_changed(self, index: int) -> None:
         """Handler para mudança de fonte."""
         self._source_path_btn.setVisible(index == 0)
-        self._gentl_cti_btn.setVisible(index == 4)
-        self._gentl_settings_btn.setVisible(index == 4)
+        self._gentl_cti_btn.setVisible(index == 3)
+        self._gentl_settings_btn.setVisible(index == 3)
         self._update_source_caption()
     
     def _select_video_file(self) -> None:
