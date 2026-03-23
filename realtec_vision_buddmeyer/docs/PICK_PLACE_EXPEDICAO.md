@@ -33,7 +33,8 @@ Buddmeyer Vision System v2.0 — Operação **sem robô físico conectado ao CLP
    Após a detecção, as coordenadas são enviadas ao CLP automaticamente, sem etapa de autorização de envio.
 
 5. **Envio ao CLP**  
-   Estado: `SENDING_DATA`. Coordenadas (centroide X, Y), confiança e demais TAGs são escritas no CLP. Status exibido: "Coordenadas enviadas ao CLP".
+   Estado: `SENDING_DATA`. Coordenadas (centroide X, Y em mm), confiança e demais TAGs são escritas no CLP. Status exibido: "Coordenadas enviadas ao CLP".  
+   **Clamp ao ROI:** quando o checkbox "Ativar ROI" está marcado na aba Operação, qualquer centroide fora do ROI é projetado ao ponto mais próximo dentro do retângulo ROI (projeção ortogonal / mínima distância euclidiana), evitando que a plataforma de pick colida com as laterais do container.
 
 6. **ACK do robô**  
    Estado: `WAITING_ACK`. O CLP/robô simulado confirma o recebimento. Status: "ACK do robô recebido". Tempo típico simulado: ~1,5 s.

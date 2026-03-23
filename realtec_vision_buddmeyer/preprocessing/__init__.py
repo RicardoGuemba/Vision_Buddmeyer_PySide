@@ -3,12 +3,10 @@
 Módulo de pré-processamento do sistema Buddmeyer Vision v2.0
 """
 
-from .preprocess_pipeline import PreprocessPipeline
-from .roi_manager import ROIManager
-from .transforms import ImageTransforms
+from .roi_manager import ROIManager, ROI, clamp_centroid_to_roi
 
 __all__ = [
-    "PreprocessPipeline",
     "ROIManager",
-    "ImageTransforms",
+    "ROI",
+    "clamp_centroid_to_roi",
 ]

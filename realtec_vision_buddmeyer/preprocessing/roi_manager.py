@@ -4,10 +4,34 @@ Gerenciamento de Region of Interest (ROI).
 """
 
 from dataclasses import dataclass
-from typing import Tuple, Optional, List
+from typing import Tuple, Optional, List, Union
 import numpy as np
 
 from PySide6.QtCore import QObject, Signal
+
+
+def clamp_centroid_to_roi(
+    cx: float,
+    cy: float,
+    roi: Union[Tuple[int, int, int, int], "ROI"],
+) -> Tuple[float, float]:
+    """
+    Projeta o centroide (cx, cy) ao ponto mais próximo dentro do ROI.
+    Usa projeção ortogonal (minimiza distância euclidiana).
+
+    Args:
+        cx: Coordenada X do centroide (px)
+        cy: Coordenada Y do centroide (px)
+        roi: ROI como (x, y, width, height) ou instância de ROI
+
+    Returns:
+        (cx_clamped, cy_clamped) - ponto dentro do ROI
+    """
+    if isinstance(roi, tuple):
+        r = ROI.from_tuple(roi)
+    else:
+        r = roi
+    return r.clamp_point(cx, cy)
 
 
 @dataclass
@@ -65,6 +89,23 @@ class ROI:
         """Verifica se um ponto está dentro do ROI."""
         return self.x <= x < self.x2 and self.y <= y < self.y2
     
+    def clamp_point(self, cx: float, cy: float) -> Tuple[float, float]:
+        """
+        Projeta o ponto (cx, cy) ao ponto mais próximo dentro do ROI.
+        Usado para limitar coordenadas ao ROI evitando colisões com plataforma.
+
+        Args:
+            cx: Coordenada X do centroide (px)
+            cy: Coordenada Y do centroide (px)
+
+        Returns:
+            (cx_clamped, cy_clamped) - ponto mais próximo dentro do ROI
+        """
+        x1, y1, x2, y2 = self.x, self.y, self.x2, self.y2
+        cx_clamped = max(float(x1), min(float(x2), cx))
+        cy_clamped = max(float(y1), min(float(y2), cy))
+        return (cx_clamped, cy_clamped)
+
     def clip_to_frame(self, frame_width: int, frame_height: int) -> "ROI":
         """Ajusta ROI para caber no frame."""
         x = max(0, min(self.x, frame_width - 1))

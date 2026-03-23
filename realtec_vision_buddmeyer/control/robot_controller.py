@@ -13,6 +13,7 @@ from PySide6.QtCore import QObject, Signal, QTimer
 
 from config import get_settings
 from core.logger import get_logger
+from preprocessing.roi_manager import clamp_centroid_to_roi
 from core.metrics import MetricsCollector
 from core.exceptions import RobotControlError, StateTransitionError
 from communication import CIPClient
@@ -475,11 +476,26 @@ class RobotController(QObject):
                 return
             
             plc_data = self._current_detection.to_plc_data()
+            centroid_x_px = plc_data["centroid_x"]
+            centroid_y_px = plc_data["centroid_y"]
+
+            # Clamp ao ROI quando exibido (evita colisão da plataforma com container)
+            roi = self._settings.preprocess.roi
+            if roi is not None and len(roi) == 4:
+                centroid_x_px, centroid_y_px = clamp_centroid_to_roi(
+                    centroid_x_px, centroid_y_px, tuple(roi)
+                )
+
+            mm_per_px = getattr(
+                self._settings.preprocess, "roi_calibration_mm_per_px", 1.0
+            ) or 1.0
+            centroid_x = centroid_x_px * mm_per_px
+            centroid_y = centroid_y_px * mm_per_px
             
             await self._cip_client.write_detection_result(
                 detected=plc_data["product_detected"],
-                centroid_x=plc_data["centroid_x"],
-                centroid_y=plc_data["centroid_y"],
+                centroid_x=centroid_x,
+                centroid_y=centroid_y,
                 confidence=plc_data["confidence"],
                 detection_count=plc_data["detection_count"],
                 processing_time=plc_data["processing_time"],
@@ -487,7 +503,7 @@ class RobotController(QObject):
             
             self._record_step(
                 f"Coordenadas enviadas ao CLP: "
-                f"({plc_data['centroid_x']:.0f}, {plc_data['centroid_y']:.0f}) "
+                f"({centroid_x:.0f}, {centroid_y:.0f}) "
                 f"conf={plc_data['confidence']:.0%}"
             )
             self.detection_sent.emit(self._current_detection)

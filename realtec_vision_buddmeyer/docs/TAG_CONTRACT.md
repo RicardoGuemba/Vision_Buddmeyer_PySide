@@ -48,8 +48,8 @@ O PRD sugere nomenclatura genérica (pc_*, plc_*). A implementação atual usa n
 | VisionError | VisionCtrl_VisionError | BOOL | Erro no sistema |
 | VisionHeartbeat | VisionCtrl_Heartbeat | BOOL | Heartbeat (toggle) |
 | ProductDetected | PRODUCT_DETECTED | BOOL | Produto detectado |
-| CentroidX | CENTROID_X | REAL | Coordenada X do centroide |
-| CentroidY | CENTROID_Y | REAL | Coordenada Y do centroide |
+| CentroidX | CENTROID_X | REAL | Coordenada X do centroide (mm). Se ROI ativo, coordenadas fora do ROI são projetadas ao ponto mais próximo dentro do ROI (evita colisão com plataforma). |
+| CentroidY | CENTROID_Y | REAL | Coordenada Y do centroide (mm). Mesma regra de clamp ao ROI quando Ativar ROI estiver marcado. |
 | Confidence | CONFIDENCE | REAL | Confiança (0-1) |
 | DetectionCount | DETECTION_COUNT | INT | Contador de detecções |
 | ProcessingTime | PROCESSING_TIME | REAL | Tempo de processamento (ms) |

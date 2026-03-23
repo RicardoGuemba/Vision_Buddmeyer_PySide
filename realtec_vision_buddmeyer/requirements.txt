@@ -23,7 +23,8 @@ Pillow>=10.2.0
 numpy>=1.24.0
 
 # Câmeras GenTL (ex.: Omron Sentech GigE)
-harvesters>=2.3.0
+# Última release estável disponível no PyPI em 2026-03-19 é 1.4.3
+harvesters==1.4.3
 
 # Comunicação CLP (Omron NX102)
 aphyt>=0.1.24

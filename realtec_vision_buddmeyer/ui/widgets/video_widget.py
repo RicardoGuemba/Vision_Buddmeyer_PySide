@@ -4,13 +4,16 @@ Widget de vídeo com overlay de detecções.
 """
 
 from typing import Optional, List
+
 import numpy as np
 
 from PySide6.QtWidgets import QWidget, QVBoxLayout, QLabel, QSizePolicy
-from PySide6.QtCore import Qt, Signal, Slot, QTimer, QRect, QSize
-from PySide6.QtGui import QImage, QPixmap, QPainter, QPen, QColor, QFont
+from PySide6.QtCore import Qt, Signal, Slot, QTimer, QRect, QSize, QPointF
+from PySide6.QtGui import QImage, QPixmap, QPainter, QPen, QColor, QFont, QBrush, QPolygonF
 
+from config import get_settings
 from detection.events import Detection, DetectionResult
+from preprocessing.roi_manager import clamp_centroid_to_roi
 
 
 class VideoWidget(QWidget):
@@ -222,7 +225,6 @@ class VideoWidget(QWidget):
         cy = (y1 + y2) // 2
         
         # Círculo maior preenchido
-        from PySide6.QtGui import QBrush
         painter.setBrush(QBrush(color))
         painter.setPen(QPen(Qt.white, 2))
         painter.drawEllipse(cx - 10, cy - 10, 20, 20)
@@ -231,6 +233,29 @@ class VideoWidget(QWidget):
         painter.setPen(QPen(Qt.black, 2))
         painter.drawLine(cx - 8, cy, cx + 8, cy)
         painter.drawLine(cx, cy - 8, cx, cy + 8)
+
+        # Centroide limitado ao ROI (exibido em amarelo quando ROI ativo)
+        roi = get_settings().preprocess.roi
+        if roi is not None and len(roi) == 4:
+            centroid_x_orig = (bbox.x1 + bbox.x2) / 2
+            centroid_y_orig = (bbox.y1 + bbox.y2) / 2
+            clamped_x, clamped_y = clamp_centroid_to_roi(
+                centroid_x_orig, centroid_y_orig, tuple(roi)
+            )
+            cx_clamped = int(clamped_x * scale_x) + offset_x
+            cy_clamped = int(clamped_y * scale_y) + offset_y
+            # Losango amarelo para marcar o centroide redefinido (enviado ao CLP)
+            yellow = QColor(255, 255, 0)
+            painter.setBrush(QBrush(yellow))
+            painter.setPen(QPen(Qt.black, 2))
+            size = 12
+            diamond = QPolygonF([
+                QPointF(cx_clamped, cy_clamped - size),
+                QPointF(cx_clamped + size, cy_clamped),
+                QPointF(cx_clamped, cy_clamped + size),
+                QPointF(cx_clamped - size, cy_clamped),
+            ])
+            painter.drawPolygon(diamond)
         
         # Coordenadas do centroide (em pixels da imagem original)
         centroid_x_original = (bbox.x1 + bbox.x2) / 2

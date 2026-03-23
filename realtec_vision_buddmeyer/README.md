@@ -109,9 +109,7 @@ realtec_vision_buddmeyer/
 │   ├── frame_buffer.py        # Buffer de frames
 │   └── stream_health.py       # Health check
 ├── preprocessing/
-│   ├── preprocess_pipeline.py # Pipeline de pré-processamento
-│   ├── roi_manager.py         # Gerenciamento de ROI
-│   └── transforms.py          # Transformações de imagem
+│   └── roi_manager.py         # ROI, clamp de centroide
 ├── detection/
 │   ├── inference_engine.py    # Engine de inferência
 │   ├── model_loader.py        # Carregador de modelos

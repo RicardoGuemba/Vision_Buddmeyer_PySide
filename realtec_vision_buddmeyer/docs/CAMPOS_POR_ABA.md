@@ -84,16 +84,16 @@ Este documento lista todos os campos de **digitação** (input) e **exibição**
   → **Função:** Exibe a confiança da última detecção (ex.: 95%); atualizado por `update_detection`; indica qualidade da detecção.
 
 - **1.3.11** Centroide X — Display — Coordenada X do centroide (em mm: px × mm/px)  
-  → **Função:** Exibe a coordenada X do centroide da última detecção; valor em mm (coord_px × roi_calibration_mm_per_px); enviada ao CLP como CENTROID_X; atualizado por `update_detection`.
+  → **Função:** Exibe a coordenada X do centroide da última detecção; valor em mm (coord_px × roi_calibration_mm_per_px); enviada ao CLP como CENTROID_X; quando ROI ativo, coordenadas fora do ROI são clampadas ao ROI antes do envio; atualizado por `update_detection`.
 
 - **1.3.12** Centroide Y — Display — Coordenada Y do centroide (em mm: px × mm/px)  
-  → **Função:** Exibe a coordenada Y do centroide da última detecção; valor em mm (coord_px × roi_calibration_mm_per_px); enviada ao CLP como CENTROID_Y; atualizado por `update_detection`.
+  → **Função:** Exibe a coordenada Y do centroide da última detecção; valor em mm (coord_px × roi_calibration_mm_per_px); enviada ao CLP como CENTROID_Y; quando ROI ativo, coordenadas fora do ROI são clampadas ao ROI antes do envio; atualizado por `update_detection`.
 
 - **1.3.13** Ativar ROI — Input (CheckBox) — Liga/desliga ROI (coordenadas configuradas em Configuração → Imagem)  
-  → **Função:** Liga ou desliga o recorte de ROI no pipeline; quando ativo, só a região [x,y,w,h] é usada na detecção; coordenadas vêm de Configuração; emite `roi_changed` → `_on_roi_changed` atualiza `preprocess.roi`.
+  → **Função:** Liga ou desliga o ROI; quando ativo, exibe overlay verde no vídeo e **limita ao ROI** as coordenadas enviadas ao CLP (projeção euclidiana: centroides fora do ROI são substituídos pelo ponto mais próximo dentro do retângulo, evitando colisão da plataforma de pick com as laterais do container); coordenadas vêm de Configuração; emite `roi_changed` → `_on_roi_changed` atualiza `preprocess.roi`.
 
 - **1.3.14** ROI X, Y, W, H — Input (SpinBox) — Coordenadas ROI — atualmente ocultos na UI (carregados de config)  
-  → **Função:** Armazena coordenadas do ROI; carregadas de `preprocess.roi`; usadas por `PreprocessPipeline` e `ROIManager` para recortar a região de interesse; ocultos na UI (configuração em Configuração → Imagem).
+  → **Função:** Armazena coordenadas do ROI; carregadas de `preprocess.roi`; usadas por `ROIManager` (clamp de centroide, overlay); ocultos na UI (configuração em Configuração → Imagem).
 
 ### 1.4. Console de Eventos
 - **1.4.1** Filtrar — Input (Combo) — Todos, Info, Sucesso, Aviso, Erro  
@@ -180,7 +180,7 @@ Este documento lista todos os campos de **digitação** (input) e **exibição**
 
 ### 2.4. Sub-aba: Imagem
 - **2.4.1** Coordenadas X, Y, W, H (ROI) — Input (DoubleSpinBox) — x, y, largura, altura [px]  
-  → **Função:** Define `preprocess.roi`; região [x, y, largura, altura] em pixels; usada pelo `ROIManager` e `PreprocessPipeline` para recortar a imagem antes da detecção.
+  → **Função:** Define `preprocess.roi`; região [x, y, largura, altura] em pixels; usada pelo `ROIManager` (clamp de coordenadas ao enviar ao CLP, overlay).
 
 - **2.4.2** Centroide (mm/px) — Input (DoubleSpinBox) — mm/px (default 1)  
   → **Função:** Define `preprocess.roi_calibration_mm_per_px`; relação mm/px aplicada ao X,Y do centroide da detecção; coord_mm = coord_px * mm_per_px; ex.: 100 → px*100; usado na exibição e no envio ao CLP.
@@ -189,7 +189,7 @@ Este documento lista todos os campos de **digitação** (input) e **exibição**
   → **Função:** Chama `_set_default_roi`; aplica `DEFAULT_ROI_QUARTER_AREA` (ex.: 181, 101, 277, 277) em pixels.
 
 - **2.4.4** Perfil — Input (Combo) — default, bright, dark, high_contrast, low_contrast, enhanced, smooth, sharp  
-  → **Função:** Define `preprocess.profile`; aplica perfil de brilho/contraste em `PreprocessPipeline`; cada perfil tem brightness/contrast pré-definidos em `PREPROCESS_PROFILES`.
+  → **Função:** Define `preprocess.profile`; valor persistido em config; reservado para uso futuro (brilho/contraste).
 
 ### 2.5. Sub-aba: CLP
 - **2.5.1** IP do CLP — Input (LineEdit) — IP do controlador  

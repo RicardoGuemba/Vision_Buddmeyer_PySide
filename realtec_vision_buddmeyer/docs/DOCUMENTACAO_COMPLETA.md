@@ -85,9 +85,7 @@ Fonte de vídeo → StreamManager (QThread) → Frame Buffer
 
 | Feature | Arquivo | Descrição |
 |---------|---------|-----------|
-| Pipeline | `preprocessing/preprocess_pipeline.py` | `PreprocessPipeline`: ROI (ROIManager), brilho/contraste (ImageTransforms), perfis (`PREPROCESS_PROFILES`: default, bright, dark, high_contrast, etc.); `process(frame)` retorna frame processado. |
-| ROI | `preprocessing/roi_manager.py` | `ROIManager`, estrutura `ROI`. |
-| Transformações | `preprocessing/transforms.py` | `ImageTransforms` (brilho, contraste, etc.). |
+| ROI | `preprocessing/roi_manager.py` | `ROIManager`, estrutura `ROI`; `clamp_centroid_to_roi(cx, cy, roi)` projeta centroide ao ponto mais próximo dentro do ROI (usado quando "Ativar ROI" está marcado, para limitar coordenadas enviadas ao CLP e evitar colisão da plataforma). |
 
 ### 2.5 Detecção
 
@@ -204,9 +202,7 @@ realtec_vision_buddmeyer/
 │   ├── frame_buffer.py
 │   └── stream_health.py
 ├── preprocessing/
-│   ├── preprocess_pipeline.py
-│   ├── roi_manager.py
-│   ├── transforms.py
+│   └── roi_manager.py
 ├── detection/
 │   ├── inference_engine.py # Singleton + InferenceWorker (QThread)
 │   ├── model_loader.py
@@ -279,11 +275,11 @@ realtec_vision_buddmeyer/
 - **Código:** `control/robot_controller.py` (estados, transições, timeouts).
 - **Manutenção:** alterar `ack_timeout`, `pick_timeout`, `place_timeout` no YAML. Para mudar lógica de estados: editar `RobotControlState`, `VALID_TRANSITIONS` e os handlers em `RobotController` (ex.: resposta a ACK, pick complete, place complete).
 
-### 5.5 Pré-processamento (ROI, brilho, contraste, perfis)
+### 5.5 Pré-processamento (ROI)
 
-- **Onde:** `config/config.yaml` (`preprocess`) e aba Configuração → Pré-processamento.
-- **Código:** `preprocessing/preprocess_pipeline.py`, `preprocessing/roi_manager.py`, `preprocessing/transforms.py`.
-- **Manutenção:** novos perfis em `PREPROCESS_PROFILES`; ajustes de ROI no pipeline; parâmetros de brilho/contraste nos transforms.
+- **Onde:** `config/config.yaml` (`preprocess`) e aba Configuração → Imagem.
+- **Código:** `preprocessing/roi_manager.py` (clamp de centroide ao ROI, overlay).
+- **Manutenção:** coordenadas ROI em pixels; calibração mm/px; perfil de imagem (persistido, reservado para uso futuro).
 
 ### 5.6 Logs e diagnósticos
 

@@ -20,6 +20,7 @@ from PySide6.QtGui import QFont, QKeySequence, QShortcut
 
 from config import get_settings
 from core.logger import get_logger
+from preprocessing.roi_manager import clamp_centroid_to_roi
 from core.metrics import MetricsCollector
 from streaming import StreamManager
 from streaming.mjpeg_server import MjpegServer
@@ -775,6 +776,13 @@ class OperationPage(QWidget):
         centroid_x_px = detection.centroid[0]
         centroid_y_px = detection.centroid[1]
         confidence = detection.confidence
+
+        # Clamp ao ROI quando exibido (evita colisão da plataforma com container)
+        roi_enabled, roi_coords = self._status_panel.get_roi()
+        if roi_enabled and roi_coords and len(roi_coords) == 4:
+            centroid_x_px, centroid_y_px = clamp_centroid_to_roi(
+                centroid_x_px, centroid_y_px, tuple(roi_coords)
+            )
 
         # Aplica mm/px ao centroide: coord_mm = coord_px * mm_per_px
         mm_per_px = getattr(
