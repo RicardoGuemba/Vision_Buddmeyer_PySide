@@ -1265,9 +1265,12 @@ class OperationPage(QWidget):
 
         if best.has_orientation:
             angle = float(best.angle_deg or 0.0)
-            length = 0.5 * max(bbox.width, bbox.height)
-            dx = math.cos(math.radians(angle)) * length
-            dy = math.sin(math.radians(angle)) * length
+            if best.major_axis_length is not None and best.major_axis_length > 0:
+                half = 0.5 * float(best.major_axis_length)
+            else:
+                half = 0.5 * max(bbox.width, bbox.height)
+            dx = math.cos(math.radians(angle)) * half
+            dy = math.sin(math.radians(angle)) * half
             p1 = (int(cx_f - dx), int(cy_f - dy))
             p2 = (int(cx_f + dx), int(cy_f + dy))
             cv2.line(out, p1, p2, (255, 0, 255), 3)

@@ -90,6 +90,8 @@ class Detection:
     centroid_override: Optional[Tuple[float, float]] = None
     angle_deg: Optional[float] = None            # [0, 180)
     area_px: Optional[float] = None              # pixels²
+    major_axis_length: Optional[float] = None    # px (lado maior do retângulo)
+    minor_axis_length: Optional[float] = None    # px (lado menor do retângulo)
 
     @property
     def centroid(self) -> Tuple[float, float]:

@@ -169,6 +169,8 @@ class SegmentationPostProcessor:
                 centroid_override=(geometry.centroid_x, geometry.centroid_y),
                 angle_deg=float(geometry.angle_deg),
                 area_px=float(geometry.area_px),
+                major_axis_length=float(geometry.major_axis_length),
+                minor_axis_length=float(geometry.minor_axis_length),
             )
             detections.append(detection)
 

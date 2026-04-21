@@ -69,9 +69,12 @@ def _draw_overlay(frame: np.ndarray, detection) -> np.ndarray:
     cv2.circle(out, (cx, cy), 8, (0, 255, 255), -1)
 
     if detection.angle_deg is not None:
-        length = 0.5 * max(detection.bbox.width, detection.bbox.height)
-        dx = math.cos(math.radians(detection.angle_deg)) * length
-        dy = math.sin(math.radians(detection.angle_deg)) * length
+        if detection.major_axis_length is not None and detection.major_axis_length > 0:
+            half = 0.5 * float(detection.major_axis_length)
+        else:
+            half = 0.5 * max(detection.bbox.width, detection.bbox.height)
+        dx = math.cos(math.radians(detection.angle_deg)) * half
+        dy = math.sin(math.radians(detection.angle_deg)) * half
         p1 = (int(cx_f - dx), int(cy_f - dy))
         p2 = (int(cx_f + dx), int(cy_f + dy))
         cv2.line(out, p1, p2, (255, 0, 255), 3)

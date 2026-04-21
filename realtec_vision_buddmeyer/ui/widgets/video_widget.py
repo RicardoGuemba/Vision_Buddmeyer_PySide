@@ -363,13 +363,20 @@ class VideoWidget(QWidget):
         scale_x: float,
         scale_y: float,
     ) -> None:
-        """Desenha o vetor do eixo maior (ângulo da embalagem) passando pelo centroide."""
+        """Desenha o vetor do eixo maior (ângulo da embalagem) passando pelo centroide.
+
+        O comprimento do segmento é o lado maior do retângulo mínimo ajustado
+        à máscara, o que faz o eixo casar exatamente com as bordas do objeto.
+        Fallback para o bbox quando o dado não está disponível.
+        """
         angle = float(detection.angle_deg or 0.0)
         cx_f, cy_f = detection.centroid
-        # Comprimento do eixo: proxy a partir do bbox para estabilidade visual.
-        length = 0.5 * max(detection.bbox.width, detection.bbox.height)
-        dx = math.cos(math.radians(angle)) * length
-        dy = math.sin(math.radians(angle)) * length
+        if detection.major_axis_length is not None and detection.major_axis_length > 0:
+            half = 0.5 * float(detection.major_axis_length)
+        else:
+            half = 0.5 * max(detection.bbox.width, detection.bbox.height)
+        dx = math.cos(math.radians(angle)) * half
+        dy = math.sin(math.radians(angle)) * half
 
         p1x = int((cx_f - dx) * scale_x) + offset_x
         p1y = int((cy_f - dy) * scale_y) + offset_y
