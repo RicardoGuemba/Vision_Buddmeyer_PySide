@@ -25,13 +25,10 @@ dist/
 *.mkv
 *.mov
 
-# === Modelos de visão computacional (binários pesados) ===
-realtec_vision_buddmeyer/model_best/*.safetensors
-realtec_vision_buddmeyer/model_best/*.pt
-realtec_vision_buddmeyer/model_best/*.pth
-realtec_vision_buddmeyer/model_best/*.onnx
-realtec_vision_buddmeyer/model_best/*.bin
+# === Modelos (binários) ===
+# O ficheiro principal de pesos está versionado com Git LFS (ver .gitattributes).
 *.safetensors
+!realtec_vision_buddmeyer/model_best/model.safetensors
 *.pt
 *.pth
 *.onnx
