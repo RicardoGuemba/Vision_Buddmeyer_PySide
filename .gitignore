@@ -26,11 +26,11 @@ dist/
 *.mov
 
 # === Modelos de visão computacional (binários pesados) ===
-realtec_vision_buddmeyer/models/*.safetensors
-realtec_vision_buddmeyer/models/*.pt
-realtec_vision_buddmeyer/models/*.pth
-realtec_vision_buddmeyer/models/*.onnx
-realtec_vision_buddmeyer/models/*.bin
+realtec_vision_buddmeyer/model_best/*.safetensors
+realtec_vision_buddmeyer/model_best/*.pt
+realtec_vision_buddmeyer/model_best/*.pth
+realtec_vision_buddmeyer/model_best/*.onnx
+realtec_vision_buddmeyer/model_best/*.bin
 *.safetensors
 *.pt
 *.pth
@@ -48,6 +48,9 @@ __pycache__/
 .Python
 *.manifest
 *.spec.bak
+.pytest_cache/
+.coverage
+htmlcov/
 
 # === IDE e editor ===
 .idea/

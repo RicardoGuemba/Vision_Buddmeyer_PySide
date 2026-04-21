@@ -1,0 +1,4 @@
+{
+  "task": "instance_segmentation",
+  "num_labels": 1
+}

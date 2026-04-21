@@ -11,6 +11,8 @@ from PySide6.QtWidgets import QWidget, QVBoxLayout, QLabel, QSizePolicy
 from PySide6.QtCore import Qt, Signal, Slot, QTimer, QRect, QSize, QPointF
 from PySide6.QtGui import QImage, QPixmap, QPainter, QPen, QColor, QFont, QBrush, QPolygonF
 
+import math
+
 from config import get_settings
 from detection.events import Detection, DetectionResult
 from preprocessing.roi_manager import clamp_centroid_to_roi
@@ -197,54 +199,67 @@ class VideoWidget(QWidget):
     ) -> None:
         """
         Desenha as detecções no frame.
-        
-        Exibe apenas o centroide da detecção de maior confiança,
-        destacando-o com um marcador maior e mais visível.
+
+        Para segmentação (Mask2Former):
+          - contorno da máscara na cor de confiança
+          - centroide geométrico (preciso)
+          - vetor do eixo maior (ângulo da embalagem)
+          - label com ângulo e área
+
+        Para object detection clássico (fallback):
+          - bbox + centroide do bbox
         """
         if not self._current_detections:
             return
-        
-        # Encontra a detecção de maior confiança
-        best_detection = max(self._current_detections, key=lambda d: d.confidence)
+
+        # Prefere a detecção com maior score combinado (confiança + área) quando disponível
+        best_detection = self._select_best(self._current_detections)
         color = self._get_color_for_confidence(best_detection.confidence)
-        
-        # Bounding box da melhor detecção
+
+        # Bounding box
         bbox = best_detection.bbox
         x1 = int(bbox.x1 * scale_x) + offset_x
         y1 = int(bbox.y1 * scale_y) + offset_y
         x2 = int(bbox.x2 * scale_x) + offset_x
         y2 = int(bbox.y2 * scale_y) + offset_y
-        
-        # Desenha retângulo apenas para a melhor detecção
-        pen = QPen(color, 3)  # Mais grosso para destacar
-        painter.setPen(pen)
-        painter.drawRect(x1, y1, x2 - x1, y2 - y1)
-        
-        # Desenha centroide da melhor detecção (maior e mais destacado)
-        cx = (x1 + x2) // 2
-        cy = (y1 + y2) // 2
-        
-        # Círculo maior preenchido
+
+        # Overlay da máscara (contorno) quando existir
+        if best_detection.has_mask and best_detection.mask is not None:
+            self._draw_mask_contour(
+                painter, best_detection.mask, color, offset_x, offset_y, scale_x, scale_y,
+            )
+        else:
+            pen = QPen(color, 3)
+            painter.setPen(pen)
+            painter.setBrush(Qt.NoBrush)
+            painter.drawRect(x1, y1, x2 - x1, y2 - y1)
+
+        # Centroide (prioriza o do mask quando existir)
+        cx_f, cy_f = best_detection.centroid
+        cx = int(cx_f * scale_x) + offset_x
+        cy = int(cy_f * scale_y) + offset_y
+
         painter.setBrush(QBrush(color))
         painter.setPen(QPen(Qt.white, 2))
         painter.drawEllipse(cx - 10, cy - 10, 20, 20)
-        
-        # Cruz no centro do centroide
         painter.setPen(QPen(Qt.black, 2))
         painter.drawLine(cx - 8, cy, cx + 8, cy)
         painter.drawLine(cx, cy - 8, cx, cy + 8)
 
-        # Centroide limitado ao ROI (exibido em amarelo quando ROI ativo)
+        # Eixo maior (vetor que indica orientação da embalagem)
+        if best_detection.has_orientation:
+            self._draw_major_axis(
+                painter, best_detection, color, offset_x, offset_y, scale_x, scale_y,
+            )
+
+        # Centroide limitado ao ROI (amarelo)
         roi = get_settings().preprocess.roi
         if roi is not None and len(roi) == 4:
-            centroid_x_orig = (bbox.x1 + bbox.x2) / 2
-            centroid_y_orig = (bbox.y1 + bbox.y2) / 2
             clamped_x, clamped_y = clamp_centroid_to_roi(
-                centroid_x_orig, centroid_y_orig, tuple(roi)
+                cx_f, cy_f, tuple(roi)
             )
             cx_clamped = int(clamped_x * scale_x) + offset_x
             cy_clamped = int(clamped_y * scale_y) + offset_y
-            # Losango amarelo para marcar o centroide redefinido (enviado ao CLP)
             yellow = QColor(255, 255, 0)
             painter.setBrush(QBrush(yellow))
             painter.setPen(QPen(Qt.black, 2))
@@ -256,33 +271,119 @@ class VideoWidget(QWidget):
                 QPointF(cx_clamped - size, cy_clamped),
             ])
             painter.drawPolygon(diamond)
-        
-        # Coordenadas do centroide (em pixels da imagem original)
-        centroid_x_original = (bbox.x1 + bbox.x2) / 2
-        centroid_y_original = (bbox.y1 + bbox.y2) / 2
-        
-        # Desenha label com coordenadas
+
+        # Labels
         label = f"{best_detection.class_name} {best_detection.confidence:.0%}"
-        coord_label = f"({centroid_x_original:.0f}, {centroid_y_original:.0f})"
-        
+        coord_label = f"({cx_f:.0f}, {cy_f:.0f})"
+        extra_parts: List[str] = []
+        if best_detection.angle_deg is not None:
+            extra_parts.append(f"{best_detection.angle_deg:.1f}°")
+        if best_detection.area_px is not None:
+            extra_parts.append(f"A={best_detection.area_px:.0f}px²")
+        extra_label = " | ".join(extra_parts)
+
         font = QFont("Segoe UI", 10, QFont.Bold)
         painter.setFont(font)
-        
-        # Background do label principal
-        label_rect = QRect(x1, y1 - 22, len(label) * 9, 20)
+
+        label_rect = QRect(x1, y1 - 22, max(len(label) * 9, 60), 20)
         painter.fillRect(label_rect, color)
-        
-        # Texto do label principal
         painter.setPen(QPen(Qt.black))
         painter.drawText(label_rect, Qt.AlignCenter, label)
-        
-        # Background do label de coordenadas (abaixo do bbox)
+
         coord_rect = QRect(cx - 50, y2 + 5, 100, 18)
         painter.fillRect(coord_rect, QColor(0, 0, 0, 180))
-        
-        # Texto das coordenadas
         painter.setPen(QPen(Qt.white))
         painter.drawText(coord_rect, Qt.AlignCenter, coord_label)
+
+        if extra_label:
+            extra_rect = QRect(cx - 90, y2 + 25, 180, 18)
+            painter.fillRect(extra_rect, QColor(0, 0, 0, 180))
+            painter.setPen(QPen(QColor(255, 255, 0)))
+            painter.drawText(extra_rect, Qt.AlignCenter, extra_label)
+
+    @staticmethod
+    def _select_best(detections: List[Detection]) -> Detection:
+        """Seleciona a melhor detecção combinando confiança e área (normalizada)."""
+        if len(detections) == 1:
+            return detections[0]
+        try:
+            max_area = max(d.effective_area_px for d in detections) or 1.0
+        except Exception:
+            return max(detections, key=lambda d: d.confidence)
+        return max(
+            detections,
+            key=lambda d: d.confidence + (d.effective_area_px / max_area) * 0.5,
+        )
+
+    def _draw_mask_contour(
+        self,
+        painter: QPainter,
+        mask: np.ndarray,
+        color: QColor,
+        offset_x: int,
+        offset_y: int,
+        scale_x: float,
+        scale_y: float,
+    ) -> None:
+        """Desenha o contorno da máscara e um overlay translúcido."""
+        try:
+            import cv2
+        except ImportError:
+            return
+        if mask is None:
+            return
+        bin_mask = mask.astype(np.uint8)
+        contours, _ = cv2.findContours(
+            bin_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE,
+        )
+        if not contours:
+            return
+        pen = QPen(color, 2)
+        painter.setPen(pen)
+        fill = QColor(color)
+        fill.setAlpha(64)
+        painter.setBrush(QBrush(fill))
+        for contour in contours:
+            if contour.shape[0] < 3:
+                continue
+            poly = QPolygonF()
+            for pt in contour.reshape(-1, 2):
+                px = float(pt[0]) * scale_x + offset_x
+                py = float(pt[1]) * scale_y + offset_y
+                poly.append(QPointF(px, py))
+            painter.drawPolygon(poly)
+
+    def _draw_major_axis(
+        self,
+        painter: QPainter,
+        detection: Detection,
+        color: QColor,
+        offset_x: int,
+        offset_y: int,
+        scale_x: float,
+        scale_y: float,
+    ) -> None:
+        """Desenha o vetor do eixo maior (ângulo da embalagem) passando pelo centroide."""
+        angle = float(detection.angle_deg or 0.0)
+        cx_f, cy_f = detection.centroid
+        # Comprimento do eixo: proxy a partir do bbox para estabilidade visual.
+        length = 0.5 * max(detection.bbox.width, detection.bbox.height)
+        dx = math.cos(math.radians(angle)) * length
+        dy = math.sin(math.radians(angle)) * length
+
+        p1x = int((cx_f - dx) * scale_x) + offset_x
+        p1y = int((cy_f - dy) * scale_y) + offset_y
+        p2x = int((cx_f + dx) * scale_x) + offset_x
+        p2y = int((cy_f + dy) * scale_y) + offset_y
+
+        pen = QPen(QColor(255, 0, 255), 3)  # magenta, alto contraste
+        painter.setPen(pen)
+        painter.setBrush(Qt.NoBrush)
+        painter.drawLine(p1x, p1y, p2x, p2y)
+
+        # Ponta da seta no lado "positivo" do eixo
+        head = 10
+        painter.drawEllipse(p2x - 5, p2y - 5, 10, 10)
     
     def _draw_fps(self, painter: QPainter) -> None:
         """Desenha o FPS no canto."""

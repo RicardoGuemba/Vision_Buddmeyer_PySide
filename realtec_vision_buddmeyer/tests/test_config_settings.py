@@ -172,7 +172,7 @@ class TestSettingsPaths:
     def test_get_models_path_relative(self):
         """get_models_path resolve caminho relativo."""
         s = Settings()
-        s.detection.model_path = "models"
+        s.detection.model_path = "model_best"
         p = s.get_models_path()
         assert isinstance(p, Path)
-        assert "models" in str(p)
+        assert "model_best" in str(p)

@@ -49,6 +49,8 @@ class SimulatedPLC:
             "PRODUCT_DETECTED": False,
             "CENTROID_X": 0.0,
             "CENTROID_Y": 0.0,
+            "CENTROID_ANGLE": 0.0,
+            "OBJECT_AREA": 0.0,
             "CONFIDENCE": 0.0,
             "DETECTION_COUNT": 0,
             "PROCESSING_TIME": 0.0,
@@ -518,18 +520,22 @@ class CIPClient(QObject):
         confidence: float = 0.0,
         detection_count: int = 0,
         processing_time: float = 0.0,
+        angle_deg: float = 0.0,
+        area: float = 0.0,
     ) -> bool:
         """
         Escreve resultado de detecção nos TAGs do CLP.
-        
+
         Args:
             detected: Se produto foi detectado
-            centroid_x: Coordenada X do centroide
+            centroid_x: Coordenada X do centroide (já convertida para mm se aplicável)
             centroid_y: Coordenada Y do centroide
             confidence: Confiança (0-1)
             detection_count: Número de detecções
             processing_time: Tempo de processamento (ms)
-        
+            angle_deg: Ângulo do eixo maior da embalagem em graus [0, 180)
+            area: Área da embalagem (px² ou mm² conforme calibração)
+
         Returns:
             True se todos os TAGs foram escritos
         """
@@ -537,19 +543,23 @@ class CIPClient(QObject):
             await self.write_tag("ProductDetected", detected)
             await self.write_tag("CentroidX", centroid_x)
             await self.write_tag("CentroidY", centroid_y)
+            await self.write_tag("CentroidAngle", float(angle_deg))
+            await self.write_tag("ObjectArea", float(area))
             await self.write_tag("Confidence", confidence)
             await self.write_tag("DetectionCount", detection_count)
             await self.write_tag("ProcessingTime", processing_time)
             await self.write_tag("VisionDataSent", True)
-            
+
             logger.info(
                 "detection_result_written",
                 detected=detected,
                 centroid=(centroid_x, centroid_y),
+                angle_deg=float(angle_deg),
+                area=float(area),
                 confidence=confidence,
             )
             return True
-            
+
         except Exception as e:
             logger.error("detection_result_write_failed", error=str(e))
             return False

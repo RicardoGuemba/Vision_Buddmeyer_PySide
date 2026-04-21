@@ -18,8 +18,9 @@ from core.logger import get_logger
 from core.metrics import MetricsCollector
 from core.exceptions import InferenceError
 
-from .model_loader import ModelLoader
+from .model_loader import ModelLoader, TASK_INSTANCE_SEGMENTATION
 from .postprocess import PostProcessor
+from .segmentation_postprocess import SegmentationPostProcessor
 from .events import DetectionResult, DetectionEvent
 
 logger = get_logger("detection.engine")
@@ -132,12 +133,16 @@ class InferenceWorker(QThread):
         # Inferência
         with torch.no_grad():
             outputs = self._model(**inputs)
-        
-        # Pós-processamento
-        target_sizes = torch.tensor([[frame.shape[0], frame.shape[1]]], device=self._device)
-        
+
+        # Pós-processamento é mais estável em CPU (especialmente MPS com interpolate
+        # de máscaras no Mask2Former). Move outputs para CPU antes do post-process.
+        if self._device != "cpu":
+            outputs = self._move_outputs_to_cpu(outputs)
+
+        target_sizes = torch.tensor([[frame.shape[0], frame.shape[1]]], device="cpu")
+
         inference_time = (time.perf_counter() - start_time) * 1000
-        
+
         result = self._postprocessor.process(
             outputs=outputs,
             target_sizes=target_sizes,
@@ -145,8 +150,24 @@ class InferenceWorker(QThread):
             frame_id=frame_id,
             inference_time_ms=inference_time,
         )
-        
+
         return result
+
+    @staticmethod
+    def _move_outputs_to_cpu(outputs: Any) -> Any:
+        """Move todos os tensores de um output de modelo para CPU (in-place nos campos)."""
+        if outputs is None:
+            return outputs
+        try:
+            for key in outputs.keys():
+                value = outputs.get(key)
+                if isinstance(value, torch.Tensor):
+                    outputs[key] = value.detach().to("cpu")
+                elif isinstance(value, (list, tuple)) and value and isinstance(value[0], torch.Tensor):
+                    outputs[key] = type(value)(v.detach().to("cpu") for v in value)
+        except Exception:
+            pass
+        return outputs
     
     def pause(self) -> None:
         """Pausa a inferência."""
@@ -215,7 +236,9 @@ class InferenceEngine(QObject):
         
         self._settings = get_settings()
         self._loader = ModelLoader()
-        self._postprocessor = PostProcessor(
+        # Pós-processador é escolhido após carregar o modelo (ver _build_postprocessor).
+        # Inicia com um pós-processador para object detection como fallback seguro.
+        self._postprocessor: Any = PostProcessor(
             confidence_threshold=self._settings.detection.confidence_threshold,
             max_detections=self._settings.detection.max_detections,
             target_classes=self._settings.detection.target_classes,
@@ -238,13 +261,19 @@ class InferenceEngine(QObject):
             True se carregado com sucesso
         """
         if model_path is None:
-            # Verifica se existe modelo local no diretório models
-            models_dir = self._get_models_directory()
-            if models_dir.exists() and self._has_local_model(models_dir):
-                model_path = str(models_dir)
-                logger.info("using_local_model", path=model_path)
+            # 1) Respeita explicitamente o caminho definido na config
+            cfg_path = (self._settings.detection.model_path or "").strip()
+            if cfg_path:
+                resolved = self._resolve_model_path(cfg_path)
+                if resolved is not None and self._has_local_model(resolved):
+                    model_path = str(resolved)
+                    logger.info("using_configured_model", path=model_path)
+                else:
+                    # Config aponta para um ID do Hugging Face ou caminho não-local válido
+                    model_path = cfg_path
+                    logger.info("using_configured_model_as_id", model=model_path)
             else:
-                # Usa modelo padrão do Hugging Face
+                # 2) Fallback final: modelo padrão do Hugging Face
                 model_path = self._settings.detection.default_model
                 logger.info("using_huggingface_model", model=model_path)
         
@@ -253,18 +282,57 @@ class InferenceEngine(QObject):
         
         try:
             self._loader.load(model_path, device)
-            logger.info("model_loaded", model=model_path, device=self._loader.device)
+            # Reconfigura o pós-processador com base na task detectada.
+            self._postprocessor = self._build_postprocessor()
+            logger.info(
+                "model_loaded",
+                model=model_path,
+                device=self._loader.device,
+                task=self._loader.task,
+            )
             self.model_loaded.emit(model_path)
             return True
         except Exception as e:
             logger.error("model_load_failed", error=str(e))
             return False
+
+    def _build_postprocessor(self) -> Any:
+        """Cria o pós-processador apropriado à task do modelo carregado."""
+        detection = self._settings.detection
+        if self._loader.task == TASK_INSTANCE_SEGMENTATION:
+            logger.info("using_segmentation_postprocessor")
+            return SegmentationPostProcessor(
+                processor=self._loader.processor,
+                confidence_threshold=detection.confidence_threshold,
+                max_detections=detection.max_detections,
+                target_classes=detection.target_classes,
+                min_mask_pixels=getattr(detection, "segmentation_min_mask_pixels", 64),
+                mask_threshold=getattr(detection, "segmentation_mask_threshold", 0.5),
+                overlap_mask_area_threshold=getattr(
+                    detection,
+                    "segmentation_overlap_mask_area_threshold",
+                    0.8,
+                ),
+            )
+        logger.info("using_object_detection_postprocessor")
+        return PostProcessor(
+            confidence_threshold=detection.confidence_threshold,
+            max_detections=detection.max_detections,
+            target_classes=detection.target_classes,
+        )
     
-    def _get_models_directory(self) -> Path:
-        """Retorna o diretório absoluto de modelos."""
-        base_path = Path(__file__).parent.parent
-        models_path = base_path / "models"
-        return models_path
+    def _resolve_model_path(self, model_path: str) -> Optional[Path]:
+        """
+        Resolve `model_path` (absoluto ou relativo ao root do projeto) para um Path.
+        Retorna None se o caminho não existir como diretório.
+        """
+        p = Path(model_path)
+        if not p.is_absolute():
+            base = Path(__file__).parent.parent
+            p = base / p
+        if p.exists() and p.is_dir():
+            return p
+        return None
     
     def _has_local_model(self, models_dir: Path) -> bool:
         """

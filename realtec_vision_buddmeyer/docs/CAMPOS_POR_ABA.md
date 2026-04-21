@@ -161,7 +161,7 @@ Este documento lista todos os campos de **digitação** (input) e **exibição**
   → **Função:** Define `detection.default_model`; ID do Hugging Face ou caminho; usado por `InferenceEngine.load_model` quando não há modelo local; fallback quando `model_path` não tem modelo válido.
 
 - **2.3.2** Caminho local — Input (LineEdit) — Caminho para modelo local  
-  → **Função:** Define `detection.model_path`; diretório com `config.json`, `preprocessor_config.json`, `model.safetensors`; prioridade sobre Hugging Face; usado por `ModelLoader.load` e `InferenceEngine._get_models_directory`.
+  → **Função:** Define `detection.model_path` (default: `model_best`); diretório com `config.json`, `preprocessor_config.json`, `task.json` e `model.safetensors`; prioridade sobre Hugging Face; usado por `ModelLoader.load` e `InferenceEngine._resolve_model_path`.
 
 - **2.3.3** Procurar... (Modelo) — Botão — Seleciona diretório do modelo  
   → **Função:** Abre `QFileDialog.getExistingDirectory`; define o caminho do modelo local.

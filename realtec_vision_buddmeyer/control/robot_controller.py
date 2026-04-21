@@ -491,7 +491,12 @@ class RobotController(QObject):
             ) or 1.0
             centroid_x = centroid_x_px * mm_per_px
             centroid_y = centroid_y_px * mm_per_px
-            
+
+            # Ângulo é invariante à escala (graus); área escala como mm² = px² * (mm/px)^2.
+            angle_deg = float(plc_data.get("angle_deg", 0.0) or 0.0)
+            area_px = float(plc_data.get("area_px", 0.0) or 0.0)
+            area_scaled = area_px * (mm_per_px ** 2)
+
             await self._cip_client.write_detection_result(
                 detected=plc_data["product_detected"],
                 centroid_x=centroid_x,
@@ -499,11 +504,14 @@ class RobotController(QObject):
                 confidence=plc_data["confidence"],
                 detection_count=plc_data["detection_count"],
                 processing_time=plc_data["processing_time"],
+                angle_deg=angle_deg,
+                area=area_scaled,
             )
-            
+
             self._record_step(
                 f"Coordenadas enviadas ao CLP: "
                 f"({centroid_x:.0f}, {centroid_y:.0f}) "
+                f"ang={angle_deg:.1f}° area={area_scaled:.0f} "
                 f"conf={plc_data['confidence']:.0%}"
             )
             self.detection_sent.emit(self._current_detection)

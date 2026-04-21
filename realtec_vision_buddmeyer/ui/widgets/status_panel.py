@@ -192,7 +192,17 @@ class StatusPanel(QWidget):
         self._det_y = QLabel("---")
         self._det_y.setStyleSheet("color: #e5e7eb; font-size: 11px;")
         detection_layout.addWidget(self._det_y, 3, 1)
-        
+
+        detection_layout.addWidget(QLabel("Ângulo (°):"), 4, 0)
+        self._det_angle = QLabel("---")
+        self._det_angle.setStyleSheet("color: #ffcc00; font-weight: bold; font-size: 11px;")
+        detection_layout.addWidget(self._det_angle, 4, 1)
+
+        detection_layout.addWidget(QLabel("Área:"), 5, 0)
+        self._det_area = QLabel("---")
+        self._det_area.setStyleSheet("color: #e5e7eb; font-size: 11px;")
+        detection_layout.addWidget(self._det_area, 5, 1)
+
         layout.addWidget(detection_group)
         
         # ROI: apenas ligar/desligar (configuração em Configuração → Imagem)
@@ -299,11 +309,27 @@ class StatusPanel(QWidget):
             cx, cy = cx_px * mm_per_px, cy_px * mm_per_px
             self._det_x.setText(f"{cx:.1f}")
             self._det_y.setText(f"{cy:.1f}")
+
+            angle = getattr(event, "angle_deg", None)
+            if angle is not None:
+                self._det_angle.setText(f"{float(angle):.1f}")
+            else:
+                self._det_angle.setText("—")
+
+            area_px = getattr(event, "area_px", None)
+            if area_px is not None:
+                area_scaled = float(area_px) * (mm_per_px ** 2)
+                unit = "mm²" if abs(mm_per_px - 1.0) > 1e-6 else "px²"
+                self._det_area.setText(f"{area_scaled:.0f} {unit}")
+            else:
+                self._det_area.setText("—")
         else:
             self._det_class.setText("---")
             self._det_confidence.setText("---")
             self._det_x.setText("---")
             self._det_y.setText("---")
+            self._det_angle.setText("---")
+            self._det_area.setText("---")
     
     def set_roi(self, enabled: bool, x: int = 0, y: int = 0, w: int = 640, h: int = 480) -> None:
         """Define ROI (bloqueia sinais para evitar loop)."""

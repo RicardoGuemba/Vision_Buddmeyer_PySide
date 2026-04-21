@@ -14,12 +14,18 @@ streaming:
   max_frame_buffer_size: 30
   loop_video: true
 detection:
-  model_path: models
-  default_model: PekingU/rtdetr_r50vd
+  model_path: model_best
+  default_model: model_best
   confidence_threshold: 0.71
   max_detections: 10
+  target_classes:
+    - Embalagem
   inference_fps: 4
   device: auto
+  segmentation_mask_threshold: 0.5
+  segmentation_overlap_mask_area_threshold: 0.8
+  segmentation_min_mask_pixels: 64
+  prioritize_area: true
 preprocess:
   profile: bright
   brightness: 0.0
@@ -27,8 +33,8 @@ preprocess:
   roi:
   - 181
   - 101
-  - 250
-  - 250
+  - 277
+  - 277
   roi_unit: px
   roi_calibration_mm_per_px: 10.0
 cip:
@@ -56,6 +62,8 @@ tags:
   ProductDetected: PRODUCT_DETECTED
   CentroidX: CENTROID_X
   CentroidY: CENTROID_Y
+  CentroidAngle: CENTROID_ANGLE
+  ObjectArea: OBJECT_AREA
   Confidence: CONFIDENCE
   DetectionCount: DETECTION_COUNT
   ProcessingTime: PROCESSING_TIME

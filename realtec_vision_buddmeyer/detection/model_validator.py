@@ -14,9 +14,26 @@ logger = get_logger("detection.validator")
 
 
 class ModelValidator:
-    """Validador de modelos RT-DETR/DETR locais."""
-    
-    # Arquivos obrigatórios para RT-DETR
+    """
+    Validador de modelos de visão locais.
+
+    Suporta tanto object detection (DETR/RT-DETR) quanto instance
+    segmentation (Mask2Former/MaskFormer/OneFormer).
+    """
+
+    # Tipos de modelo aceitos no config.json (model_type)
+    ACCEPTED_MODEL_TYPES = (
+        "detr",
+        "rtdetr",
+        "rt_detr",
+        "conditional_detr",
+        "deformable_detr",
+        "mask2former",
+        "maskformer",
+        "oneformer",
+    )
+
+    # Arquivos obrigatórios
     REQUIRED_FILES = [
         "config.json",
         "preprocessor_config.json",
@@ -114,12 +131,15 @@ class ModelValidator:
                     # Não é erro crítico, apenas aviso
                     pass
             
-            # Verifica se é um modelo de detecção
+            # Verifica se é um modelo compatível (object detection ou segmentation)
             if "model_type" in config:
-                model_type = config["model_type"]
-                if "detr" not in model_type.lower() and "rtdetr" not in model_type.lower():
-                    errors.append(f"config.json: tipo de modelo '{model_type}' pode não ser compatível")
-            
+                model_type = str(config["model_type"]).lower()
+                if not any(accepted in model_type for accepted in cls.ACCEPTED_MODEL_TYPES):
+                    errors.append(
+                        f"config.json: tipo de modelo '{model_type}' não está "
+                        f"na lista de tipos suportados: {cls.ACCEPTED_MODEL_TYPES}"
+                    )
+
             return len(errors) == 0, errors
             
         except json.JSONDecodeError as e:

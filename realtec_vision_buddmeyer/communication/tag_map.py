@@ -111,6 +111,20 @@ class TagMap:
             direction=TagDirection.WRITE,
             description="Coordenada Y do centroide",
         ),
+        "CentroidAngle": TagDefinition(
+            logical_name="CentroidAngle",
+            plc_name="CENTROID_ANGLE",
+            tag_type=TagType.REAL,
+            direction=TagDirection.WRITE,
+            description="Ângulo do eixo maior da embalagem (graus, [0, 180))",
+        ),
+        "ObjectArea": TagDefinition(
+            logical_name="ObjectArea",
+            plc_name="OBJECT_AREA",
+            tag_type=TagType.REAL,
+            direction=TagDirection.WRITE,
+            description="Área do objeto (px² ou mm², conforme calibração)",
+        ),
         "Confidence": TagDefinition(
             logical_name="Confidence",
             plc_name="CONFIDENCE",

@@ -1,6 +1,0 @@
-{
-  "class_names": ["Embalagem"],
-  "num_classes": 1,
-  "background_class": false,
-  "description": "Modelo treinado para detecção de embalagens na linha de expedição Buddmeyer"
-}

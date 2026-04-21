@@ -41,13 +41,37 @@ class StreamingSettings(BaseModel):
 class DetectionSettings(BaseModel):
     """Configurações de detecção."""
     
-    model_path: str = Field(default="models", description="Caminho para modelos locais")
-    default_model: str = Field(default="PekingU/rtdetr_r50vd", description="Modelo padrão")
+    model_path: str = Field(default="model_best", description="Caminho para modelo local (relativo ao pacote)")
+    default_model: str = Field(
+        default="model_best",
+        description="Modelo padrão (caminho local ou ID do Hugging Face)",
+    )
     confidence_threshold: float = Field(default=0.5, ge=0.0, le=1.0, description="Threshold de confiança")
     max_detections: int = Field(default=10, ge=1, description="Máximo de detecções")
-    target_classes: Optional[List[str]] = Field(default=None, description="Classes alvo (null = todas)")
+    target_classes: Optional[List[str]] = Field(
+        default=["Embalagem"],
+        description="Classes alvo (null = todas). Padrão: apenas 'Embalagem'",
+    )
     inference_fps: int = Field(default=15, ge=1, description="FPS de inferência")
     device: str = Field(default="auto", description="Device: cpu, cuda, mps, auto (mps = Apple Silicon)")
+
+    # Parâmetros específicos de instance segmentation (Mask2Former)
+    segmentation_mask_threshold: float = Field(
+        default=0.5, ge=0.0, le=1.0,
+        description="Threshold de binarização das máscaras Mask2Former",
+    )
+    segmentation_overlap_mask_area_threshold: float = Field(
+        default=0.8, ge=0.0, le=1.0,
+        description="Threshold de sobreposição de máscaras (pós-processamento)",
+    )
+    segmentation_min_mask_pixels: int = Field(
+        default=64, ge=1,
+        description="Área mínima (px) para aceitar uma máscara e calcular geometria/PCA",
+    )
+    prioritize_area: bool = Field(
+        default=True,
+        description="Usa confiança+área para eleger a melhor detecção (pick-and-place)",
+    )
     
     @field_validator("device")
     @classmethod
@@ -124,6 +148,8 @@ class TagSettings(BaseModel):
     ProductDetected: str = Field(default="PRODUCT_DETECTED")
     CentroidX: str = Field(default="CENTROID_X")
     CentroidY: str = Field(default="CENTROID_Y")
+    CentroidAngle: str = Field(default="CENTROID_ANGLE")
+    ObjectArea: str = Field(default="OBJECT_AREA")
     Confidence: str = Field(default="CONFIDENCE")
     DetectionCount: str = Field(default="DETECTION_COUNT")
     ProcessingTime: str = Field(default="PROCESSING_TIME")

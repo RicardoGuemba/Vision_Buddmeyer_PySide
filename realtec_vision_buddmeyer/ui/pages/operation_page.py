@@ -6,7 +6,7 @@ Página de Operação - Aba principal para operação do sistema.
 import asyncio
 import time
 from pathlib import Path
-from typing import Optional
+from typing import List, Optional
 
 import numpy as np
 
@@ -791,31 +791,40 @@ class OperationPage(QWidget):
         centroid_x = centroid_x_px * mm_per_px
         centroid_y = centroid_y_px * mm_per_px
 
+        # Ângulo e área (vindos do pipeline de segmentação)
+        angle_deg = float(getattr(detection, "angle_deg", None) or 0.0)
+        area_px = float(getattr(detection, "area_px", None) or 0.0)
+        area_scaled = area_px * (mm_per_px ** 2)
+
         # Log da comunicação
         self._logger.info(
             "communicating_centroid_to_plc",
             frame=self._frame_count,
             centroid_x=centroid_x,
             centroid_y=centroid_y,
+            angle_deg=angle_deg,
+            area=area_scaled,
             confidence=confidence,
             plc_status=self._cip_client._state.status.value,
         )
-        
-        # Mensagem no console (a cada 25 frames para não poluir)
+
         self._event_console.add_info(
-            f"[Frame {self._frame_count}] Enviando centroide: ({centroid_x:.1f}, {centroid_y:.1f}) - Conf: {confidence:.0%}",
-            "CLP"
+            f"[Frame {self._frame_count}] Enviando centroide: "
+            f"({centroid_x:.1f}, {centroid_y:.1f}) ang={angle_deg:.1f}° "
+            f"area={area_scaled:.0f} Conf: {confidence:.0%}",
+            "CLP",
         )
-        
-        # Envia dados ao CLP usando as TAGs definidas
+
         asyncio.create_task(self._send_detection_to_plc(
             centroid_x=centroid_x,
             centroid_y=centroid_y,
             confidence=confidence,
             detection_count=detection.detection_count,
             processing_time=detection.inference_time_ms,
+            angle_deg=angle_deg,
+            area=area_scaled,
         ))
-    
+
     async def _send_detection_to_plc(
         self,
         centroid_x: float,
@@ -823,6 +832,8 @@ class OperationPage(QWidget):
         confidence: float,
         detection_count: int,
         processing_time: float,
+        angle_deg: float = 0.0,
+        area: float = 0.0,
     ) -> None:
         """
         Envia dados de detecção ao CLP via TAGs com handshake básico.
@@ -865,6 +876,8 @@ class OperationPage(QWidget):
                 confidence=confidence,
                 detection_count=detection_count,
                 processing_time=processing_time,
+                angle_deg=angle_deg,
+                area=area,
             )
             
             self._logger.debug(
@@ -1201,31 +1214,83 @@ class OperationPage(QWidget):
         return out
 
     def _draw_detections_on_frame(self, frame, result) -> np.ndarray:
-        """Desenha a melhor detecção no frame (BGR) para o stream MJPEG."""
+        """Desenha a melhor detecção no frame (BGR) para o stream MJPEG.
+
+        Quando há máscara (segmentação), desenha contorno + centróide geométrico
+        + vetor do eixo maior; caso contrário, desenha bbox + centro do bbox.
+        """
         import cv2
+        import math
 
         if result is None or not result.has_detections:
             return frame
-        best = result.best_detection
+        # Prioriza confiança+área quando possível
+        try:
+            best = result.best_by_priority()
+        except AttributeError:
+            best = result.best_detection
         if best is None:
             return frame
         out = frame.copy()
         bbox = best.bbox
         x1, y1 = int(bbox.x1), int(bbox.y1)
         x2, y2 = int(bbox.x2), int(bbox.y2)
-        # Cor por confiança (BGR)
+
         if best.confidence >= 0.8:
-            color = (0, 255, 0)  # Verde
+            color = (0, 255, 0)
         elif best.confidence >= 0.5:
-            color = (0, 255, 255)  # Amarelo
+            color = (0, 255, 255)
         else:
-            color = (0, 165, 255)  # Laranja
-        cv2.rectangle(out, (x1, y1), (x2, y2), color, 3)
-        cx, cy = int((x1 + x2) / 2), int((y1 + y2) / 2)
+            color = (0, 165, 255)
+
+        if best.has_mask and best.mask is not None:
+            try:
+                bin_mask = best.mask.astype(np.uint8)
+                contours, _ = cv2.findContours(
+                    bin_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE,
+                )
+                overlay = out.copy()
+                cv2.drawContours(overlay, contours, -1, color, thickness=cv2.FILLED)
+                cv2.addWeighted(overlay, 0.25, out, 0.75, 0, out)
+                cv2.drawContours(out, contours, -1, color, thickness=2)
+            except Exception:
+                cv2.rectangle(out, (x1, y1), (x2, y2), color, 3)
+        else:
+            cv2.rectangle(out, (x1, y1), (x2, y2), color, 3)
+
+        cx_f, cy_f = best.centroid
+        cx, cy = int(cx_f), int(cy_f)
         cv2.circle(out, (cx, cy), 10, color, 2)
         cv2.circle(out, (cx, cy), 10, (255, 255, 255), 1)
+
+        if best.has_orientation:
+            angle = float(best.angle_deg or 0.0)
+            length = 0.5 * max(bbox.width, bbox.height)
+            dx = math.cos(math.radians(angle)) * length
+            dy = math.sin(math.radians(angle)) * length
+            p1 = (int(cx_f - dx), int(cy_f - dy))
+            p2 = (int(cx_f + dx), int(cy_f + dy))
+            cv2.line(out, p1, p2, (255, 0, 255), 3)
+            cv2.circle(out, p2, 6, (255, 0, 255), -1)
+
         label = f"{best.class_name} {best.confidence:.0%}"
-        cv2.putText(out, label, (x1, y1 - 8), cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2)
+        cv2.putText(out, label, (x1, max(12, y1 - 8)), cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2)
+
+        extras: List[str] = []
+        if best.angle_deg is not None:
+            extras.append(f"{best.angle_deg:.1f} deg")
+        if best.area_px is not None:
+            extras.append(f"A={best.area_px:.0f}px2")
+        if extras:
+            cv2.putText(
+                out,
+                " | ".join(extras),
+                (x1, y2 + 18),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.55,
+                (0, 255, 255),
+                2,
+            )
         return out
 
     @Slot(object)
