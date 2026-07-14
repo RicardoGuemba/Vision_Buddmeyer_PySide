@@ -71,7 +71,7 @@ Buddmeyer Vision System v2.0 — Operação **sem robô físico conectado ao CLP
   Cada etapa gera mensagens no console (com origem "Robô" ou "Ciclo"), incluindo o resumo ao final do ciclo.
 
 - **Painel lateral**  
-  Estado do robô, última detecção e contadores (detecções, ciclos, erros) são atualizados em tempo real.
+  Estado do robô e última detecção (X, Y, ângulo, área) são atualizados em tempo real. Contadores de detecções/ciclos/erros ficam na aba **Diagnósticos**.
 
 ---
 

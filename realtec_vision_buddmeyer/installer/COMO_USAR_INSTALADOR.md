@@ -1,122 +1,61 @@
-# 🚀 Como Usar o Instalador .exe
+# Instalador Windows — Buddmeyer Vision
 
-## 📦 Arquivo Criado
+Guia para gerar e usar o instalador PyInstaller no Windows.
 
-O instalador foi criado em:
-```
-realtec_vision_buddmeyer/installer/dist/BuddmeyerVisionInstaller.exe
-```
+## Gerar o instalador
 
-## 🎯 Como Executar o Instalador
+O ficheiro `.exe` **não está versionado** no repositório. Gere localmente:
 
-### Passo 1: Execute o arquivo .exe
-
-Dê duplo clique em:
-```
-BuddmeyerVisionInstaller.exe
-```
-
-### Passo 2: Siga as instruções
-
-O instalador irá:
-1. ✅ Verificar se Python 3.10+ está instalado
-2. ✅ Criar diretório de instalação (padrão: `C:\Users\[Usuário]\BuddmeyerVision`)
-3. ✅ Copiar todos os arquivos do projeto
-4. ✅ Criar ambiente virtual Python
-5. ✅ Instalar todas as dependências:
-   - PySide6 (Interface)
-   - PyTorch (ML com CUDA)
-   - Transformers (RT-DETR)
-   - OpenCV (Processamento de Imagem)
-   - aphyt (Comunicação CIP)
-   - E mais 30+ pacotes
-6. ✅ Criar scripts de inicialização
-7. ✅ Verificar instalação
-
-### Passo 3: Aguarde a conclusão
-
-A instalação pode levar **10-30 minutos** dependendo da velocidade da internet, pois precisa baixar:
-- PyTorch (~2.8 GB com CUDA)
-- Transformers e outras bibliotecas ML
-- Todas as dependências
-
-### Passo 4: Inicie o sistema
-
-Após a instalação:
-
-1. Navegue até o diretório de instalação (ex: `C:\Users\[Usuário]\BuddmeyerVision`)
-
-2. Dê duplo clique em:
-   ```
-   Iniciar_Buddmeyer_Vision.bat
-   ```
-
-Ou execute no terminal:
 ```powershell
-cd C:\Users\[Usuário]\BuddmeyerVision
-.\venv\Scripts\activate
-python realtec_vision_buddmeyer\main.py
+cd realtec_vision_buddmeyer\installer
+python build_installer.py
 ```
 
-## ⚠️ Requisitos Antes de Instalar
+Saída esperada: `installer/dist/BuddmeyerVisionInstaller.exe`
 
-- ✅ **Windows 10/11**
-- ✅ **Python 3.10+** instalado (o instalador verifica)
-- ✅ **Conexão com internet** (para download de dependências)
-- ✅ **~10 GB de espaço em disco** livre
-- ✅ **Privilégios de administrador** (recomendado)
+Ficheiros envolvidos:
+- `installer/install.py` — lógica de instalação
+- `installer/BuddmeyerVisionInstaller.spec` — spec PyInstaller
 
-## 🔧 Troubleshooting
+## Executar o instalador
 
-### Erro: "Python não encontrado"
-- Instale Python 3.10+ de https://www.python.org/downloads/
-- Marque "Add Python to PATH" durante instalação
-- Reinicie o computador após instalar Python
+1. Duplo-clique em `BuddmeyerVisionInstaller.exe`
+2. O instalador:
+   - Verifica **Python 3.10+** no sistema
+   - Copia o projeto para `C:\Users\[Usuário]\BuddmeyerVision` (padrão)
+   - Cria ambiente virtual e instala dependências
+   - Inclui modelo **Mask2Former** em `model_best/`
+3. Após conclusão, inicie com `Iniciar_Buddmeyer_Vision.bat` ou:
+   ```powershell
+   cd C:\Users\[Usuário]\BuddmeyerVision
+   .\venv\Scripts\activate
+   python realtec_vision_buddmeyer\main.py
+   ```
 
-### Erro: "Falha ao instalar dependências"
-- Verifique conexão com internet
-- Execute o instalador como Administrador
-- Verifique espaço em disco disponível
-- Tente novamente (algumas dependências podem falhar na primeira tentativa)
+## Requisitos
 
-### Erro: "PyTorch não instalado"
-- O instalador tentará instalar PyTorch CPU como fallback
-- Se falhar, instale manualmente após a instalação:
-  ```bash
-  cd [diretório_instalação]
-  .\venv\Scripts\activate
-  pip install torch torchvision
-  ```
+- Windows 10/11
+- Python 3.10+ instalado e no PATH
+- ~10 GB disco livre
+- Internet (PyTorch e dependências)
 
-### Instalação muito lenta
-- Normal! PyTorch com CUDA tem ~2.8 GB
-- Aguarde a conclusão
-- Não feche a janela do instalador
+## Dependências instaladas
 
-## 📝 Notas Importantes
+- PySide6 (interface)
+- PyTorch + Transformers (Mask2Former)
+- OpenCV, NumPy, Pillow
+- aphyt (CIP/EtherNet-IP)
+- Demais pacotes em `requirements.txt`
 
-- O instalador **não requer** Python pré-instalado no sistema (mas é recomendado)
-- Se Python não estiver instalado, o instalador mostrará instruções
-- O ambiente virtual é criado automaticamente
-- Todas as dependências são instaladas no ambiente virtual (isoladas)
+## Troubleshooting
 
-## 🎉 Após Instalação Bem-Sucedida
+| Problema | Solução |
+|----------|---------|
+| Python não encontrado | Instalar de python.org com "Add to PATH" |
+| Falha em dependências | Executar como Administrador; verificar rede |
+| Modelo ausente | Confirmar que `model_best/` foi copiado na instalação |
 
-Você verá:
-```
-============================================================
-INSTALAÇÃO CONCLUÍDA COM SUCESSO!
-============================================================
-✓ Sistema instalado em: C:\Users\[Usuário]\BuddmeyerVision
+## Documentação
 
-Para iniciar o sistema:
-  1. Navegue até: C:\Users\[Usuário]\BuddmeyerVision
-  2. Dê duplo clique em: Iniciar_Buddmeyer_Vision.bat
-```
-
-## 📞 Suporte
-
-Se encontrar problemas:
-1. Verifique os logs em `[diretório_instalação]\logs\`
-2. Execute o instalador novamente (ele pode continuar de onde parou)
-3. Verifique se todas as dependências foram instaladas corretamente
+- [docs/CLONE_BOX_PC.md](../docs/CLONE_BOX_PC.md) — alternativa sem instalador (git clone + LFS)
+- [docs/REFERENCE.md](../docs/REFERENCE.md) — referência técnica

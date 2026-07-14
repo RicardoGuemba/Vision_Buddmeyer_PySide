@@ -29,7 +29,7 @@ Documento que descreve tudo o que foi implementado e alterado para suporte à c�
 | **Proteção na abertura**               | Remoção do `fetch()` em `open()` do adaptador GenTL para não travar a UI ao obter um frame 20MP na thread principal. Dimensões passam a ser obtidas no primeiro `read()` na thread do worker.      |
 | **Redimensionamento**                    | Frames grandes (ex.: 5472×3648) são redimensionados para um máximo configurável (ex.: 1920 px no lado maior) para não travar exibição e inferência. Limite de segurança mesmo com "Sem limite" (0). |
 | **Cache no widget de vídeo**            | Conversão numpy → QImage → QPixmap e escala passam a ser cacheadas; só recalculadas quando o frame ou o tamanho do widget mudam, reduzindo trabalho na thread principal.                                 |
-| **Carregamento do modelo em background** | Carregamento do modelo RT-DETR em uma**QThread**; botão "Carregando modelo..." e UI responsiva durante o carregamento.                                                                                |
+| **Carregamento do modelo em background** | Carregamento do modelo Mask2Former (`model_best/`) em uma **QThread**; botão "Carregando modelo..." e UI responsiva durante o carregamento. |
 | **Logger**                               | Uso de `datetime.now(timezone.utc)` em vez de `datetime.utcnow()` para evitar DeprecationWarning.                                                                                                        |
 | **Dependência**                         | Inclusão de**harvesters** em `requirements.txt` para suporte GenTL.                                                                                                                                 |
 
@@ -199,7 +199,7 @@ Botões:
 
 ### 7.1 Objetivo
 
-- Evitar que a UI trave durante o carregamento do modelo RT-DETR (pesos e pré-processador).
+- Evitar que a UI trave durante o carregamento do modelo Mask2Former (pesos e pré-processador).
 
 ### 7.2 Implementação
 

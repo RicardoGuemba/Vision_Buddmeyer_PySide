@@ -1,6 +1,28 @@
 # Changelog
 
-## [Unreleased] – Higienização e stream MJPEG
+## [Unreleased] – Documentação e diagnóstico de inferência
+
+### Adicionado
+
+- **docs/OVERVIEW.md**, **docs/REFERENCE.md**, **docs/GUIA_OPERADOR.md** — nova hierarquia de documentação (alto/baixo nível).
+- Diagnóstico de inferência (`inference_diagnostic`), warm-up USB, testes associados.
+
+### Removido
+
+- **DOCUMENTACAO_COMPLETA.md**, **CAMPOS_POR_ABA.md**, **USO_E_ABAS.md** — substituídos pela nova documentação.
+- **TUTORIAL_OPENCODE.md** — conteúdo não relacionado ao projeto.
+
+### Alterado
+
+- **README.md**, **ROTEIRO_CLIENTE.md**, **PROJECT_RULES.md** — alinhados ao pipeline Mask2Former.
+- **TAG_CONTRACT.md** — tags `CENTROID_ANGLE` e `OBJECT_AREA`.
+- **CLONE_BOX_PC.md** — URL do repositório GitHub atualizada.
+
+### Nota histórica
+
+Entradas anteriores que referem `scripts/test_cip_config_reload.py` descrevem um script já removido; use `pytest tests/test_config_settings.py` para validar recarregamento de config.
+
+---
 
 ### Removido (higienização)
 

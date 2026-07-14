@@ -23,8 +23,8 @@ Este guia cobre o **Vision Buddmeyer** (`realtec_vision_buddmeyer`) num PC indus
 Substitua a URL pela do repositório que a Realtec lhe indicar (ex.: GitHub).
 
 ```bash
-git clone https://github.com/RicardoGuemba/Vision_Buddmeyer_PySide.git
-cd Vision_Buddmeyer_PySide
+git clone https://github.com/RicardoGuemba/Realtec_Vision_Buddmeyer.git
+cd Realtec_Vision_Buddmeyer
 git lfs install
 git lfs pull
 ```

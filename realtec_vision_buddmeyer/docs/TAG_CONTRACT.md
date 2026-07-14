@@ -24,6 +24,8 @@ O PRD sugere nomenclatura genérica (pc_*, plc_*). A implementação atual usa n
 | pc_cmd_valid | VisionDataSent | VisionCtrl_DataSent | BOOL | PC→CLP | Comando/dados enviados |
 | pc_x | CentroidX | CENTROID_X | REAL | PC→CLP | Coordenada X |
 | pc_y | CentroidY | CENTROID_Y | REAL | PC→CLP | Coordenada Y |
+| — | CentroidAngle | CENTROID_ANGLE | REAL | PC→CLP | Ângulo do eixo maior (graus, segmentação) |
+| — | ObjectArea | OBJECT_AREA | REAL | PC→CLP | Área da máscara (px²) |
 | — | Confidence | CONFIDENCE | REAL | PC→CLP | Confiança (0-1) |
 | — | ProductDetected | PRODUCT_DETECTED | BOOL | PC→CLP | Produto detectado |
 | plc_ack (implícito) | RobotAck | ROBOT_ACK | BOOL | CLP→PC | ACK do comando |
@@ -48,8 +50,10 @@ O PRD sugere nomenclatura genérica (pc_*, plc_*). A implementação atual usa n
 | VisionError | VisionCtrl_VisionError | BOOL | Erro no sistema |
 | VisionHeartbeat | VisionCtrl_Heartbeat | BOOL | Heartbeat (toggle) |
 | ProductDetected | PRODUCT_DETECTED | BOOL | Produto detectado |
-| CentroidX | CENTROID_X | REAL | Coordenada X do centroide (mm). Se ROI ativo, coordenadas fora do ROI são projetadas ao ponto mais próximo dentro do ROI (evita colisão com plataforma). |
-| CentroidY | CENTROID_Y | REAL | Coordenada Y do centroide (mm). Mesma regra de clamp ao ROI quando Ativar ROI estiver marcado. |
+| CentroidX | CENTROID_X | REAL | Coordenada X do centroide. Com ROI ativo, valores fora são projetados ao ROI. |
+| CentroidY | CENTROID_Y | REAL | Coordenada Y do centroide. Mesma regra de clamp ao ROI. |
+| CentroidAngle | CENTROID_ANGLE | REAL | Ângulo do eixo maior da embalagem (graus, `[0, 180)`), via PCA da máscara |
+| ObjectArea | OBJECT_AREA | REAL | Área da máscara em px² |
 | Confidence | CONFIDENCE | REAL | Confiança (0-1) |
 | DetectionCount | DETECTION_COUNT | INT | Contador de detecções |
 | ProcessingTime | PROCESSING_TIME | REAL | Tempo de processamento (ms) |
