@@ -336,6 +336,11 @@ class DiagnosticsPage(QWidget):
         scroll.setWidget(widget)
         return scroll
     
+    def stop_timers(self) -> None:
+        """Para timers ao encerrar a aplicação."""
+        if hasattr(self, "_update_timer"):
+            self._update_timer.stop()
+
     def _setup_timer(self) -> None:
         """Configura timer de atualização."""
         self._update_timer = QTimer(self)

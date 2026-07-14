@@ -42,6 +42,7 @@ class MainWindow(QMainWindow):
         super().__init__()
         
         self._settings = get_settings()
+        self._exit_in_progress = False
         
         # Singletons
         self._stream_manager = StreamManager()
@@ -446,53 +447,72 @@ class MainWindow(QMainWindow):
             """
         )
     
+    def _is_busy_for_exit(self) -> bool:
+        """True se há stream, inferência ou carregamento de modelo ativo."""
+        op = self._operation_page
+        return (
+            op._is_running
+            or op._stream_manager.is_running
+            or op._inference_engine.is_running
+            or getattr(op, "_model_loading", False)
+        )
+
     def _confirm_and_exit(self) -> None:
-        """Sair do sistema (menu Arquivo → Sair ou Ctrl+Q)."""
-        if self._operation_page._stream_manager.is_running:
+        """Sair (menu Arquivo/Sistema, Ctrl+Q/Cmd+Q, botão Sair nas abas)."""
+        if self._exit_in_progress:
+            return
+        if self._is_busy_for_exit():
             reply = QMessageBox.question(
                 self,
                 "Confirmar Saída",
-                "O sistema está em execução. Deseja parar e sair?",
+                "O sistema está em execução ou carregando o modelo. Deseja parar e sair?",
                 QMessageBox.Yes | QMessageBox.No,
                 QMessageBox.No,
             )
-            if reply == QMessageBox.Yes:
-                # Defer shutdown para próxima iteração do event loop (evita travamento)
-                QTimer.singleShot(0, self._do_stop_and_exit)
-            else:
-                pass
+            if reply != QMessageBox.Yes:
+                return
+        self._begin_exit()
+
+    def _begin_exit(self) -> None:
+        """Shutdown unificado: timers, operação, CLP; depois encerra o processo."""
+        if self._exit_in_progress:
+            return
+        self._exit_in_progress = True
+        if hasattr(self, "_status_timer"):
+            self._status_timer.stop()
+        if hasattr(self, "_diagnostics_page"):
+            self._diagnostics_page.stop_timers()
+        self._operation_page.shutdown()
+        QTimer.singleShot(200, self._complete_exit)
+
+    def _complete_exit(self) -> None:
+        """Fecha a janela e termina o event loop Qt."""
+        from PySide6.QtWidgets import QApplication
+
+        self.hide()
+        app = QApplication.instance()
+        if app is not None:
+            app.quit()
         else:
             self.close()
 
-    def _do_stop_and_exit(self) -> None:
-        """Para o sistema e fecha a janela (executado em timer para não bloquear UI)."""
-        self._operation_page._stop_system()
-        QTimer.singleShot(150, self.close)
-    
     def closeEvent(self, event) -> None:
-        """Evento de fechamento."""
-        if self._operation_page._stream_manager.is_running:
+        """Fechamento da janela (botão X ou Cmd+W)."""
+        if self._exit_in_progress:
+            event.accept()
+            logger.info("application_closed")
+            return
+        if self._is_busy_for_exit():
+            event.ignore()
             reply = QMessageBox.question(
                 self,
                 "Confirmar Saída",
-                "O sistema está em execução. Deseja parar e sair?",
+                "O sistema está em execução ou carregando o modelo. Deseja parar e sair?",
                 QMessageBox.Yes | QMessageBox.No,
                 QMessageBox.No,
             )
             if reply == QMessageBox.Yes:
-                event.ignore()
-                QTimer.singleShot(0, self._do_stop_and_close_event)
-            else:
-                event.ignore()
-        else:
-            event.accept()
-            logger.info("application_closed")
-
-    def _do_stop_and_close_event(self) -> None:
-        """Para o sistema e fecha a janela (para closeEvent)."""
-        self._operation_page._stop_system()
-        QTimer.singleShot(150, self._close_after_stop)
-
-    def _close_after_stop(self) -> None:
-        """Fecha a janela após parada."""
-        self.close()
+                self._begin_exit()
+            return
+        self._begin_exit()
+        event.ignore()

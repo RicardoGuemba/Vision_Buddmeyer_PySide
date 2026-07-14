@@ -63,7 +63,7 @@ class TestShutdownStability:
         assert not page._is_running
 
     def test_main_window_close_without_running(self, qtbot):
-        """MainWindow fecha sem erro quando sistema não está rodando."""
+        """MainWindow inicia shutdown unificado ao fechar sem sistema rodando."""
         from ui.main_window import MainWindow
 
         window = MainWindow()
@@ -71,4 +71,74 @@ class TestShutdownStability:
         window.show()
         qtbot.waitExposed(window)
         window.close()
+        assert window._exit_in_progress
+        qtbot.wait(250)
+        window._complete_exit()
         assert window.isHidden() or not window.isVisible()
+
+    def test_shutdown_cancels_model_loading(self, qtbot):
+        """shutdown() limpa estado de carregamento do modelo sem QThread pendente."""
+        from ui.pages.operation_page import OperationPage
+
+        page = OperationPage()
+        qtbot.addWidget(page)
+        page._model_loading = True
+        page._pending_start_source_label = "USB"
+        page.shutdown()
+        assert not page._model_loading
+        assert page._pending_start_source_label is None
+
+    def test_shutdown_stops_cip_timers(self, qtbot):
+        """shutdown() chama shutdown_for_exit no cliente CIP."""
+        from ui.pages.operation_page import OperationPage
+
+        page = OperationPage()
+        qtbot.addWidget(page)
+        page._cip_client._start_heartbeat()
+        assert page._cip_client._heartbeat_timer is not None
+        page.shutdown()
+        assert page._cip_client._heartbeat_timer is None
+
+    def test_main_window_begin_exit_idempotent(self, qtbot):
+        """_begin_exit pode ser chamado uma vez sem erro."""
+        from ui.main_window import MainWindow
+
+        window = MainWindow()
+        qtbot.addWidget(window)
+        window.show()
+        qtbot.waitExposed(window)
+        window._begin_exit()
+        assert window._exit_in_progress
+        window._begin_exit()
+        assert window._exit_in_progress
+
+    def test_is_busy_for_exit_model_loading(self, qtbot):
+        """Carregamento de modelo exige confirmação de saída."""
+        from ui.main_window import MainWindow
+
+        window = MainWindow()
+        qtbot.addWidget(window)
+        window._operation_page._model_loading = True
+        assert window._is_busy_for_exit()
+
+    def test_diagnostics_stop_timers(self, qtbot):
+        """DiagnosticsPage para timer de atualização."""
+        from ui.pages.diagnostics_page import DiagnosticsPage
+
+        page = DiagnosticsPage()
+        qtbot.addWidget(page)
+        assert page._update_timer.isActive()
+        page.stop_timers()
+        assert not page._update_timer.isActive()
+
+    def test_model_load_skipped_after_shutdown(self, qtbot):
+        """Carregamento do modelo não continua após shutdown."""
+        from ui.pages.operation_page import OperationPage
+
+        page = OperationPage()
+        qtbot.addWidget(page)
+        page._model_loading = True
+        page.shutdown()
+        page._run_model_load_on_main_thread()
+        assert not page._model_loading
+

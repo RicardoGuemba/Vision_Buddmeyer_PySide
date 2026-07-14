@@ -15,7 +15,7 @@ from PySide6.QtWidgets import (
     QPushButton, QComboBox, QLabel, QFileDialog,
     QSplitter, QGroupBox, QCheckBox, QMessageBox,
 )
-from PySide6.QtCore import Qt, Slot, QTimer, QObject, Signal, QThread
+from PySide6.QtCore import Qt, Slot, QTimer, Signal
 from PySide6.QtGui import QFont, QKeySequence, QShortcut
 
 from config import get_settings
@@ -32,22 +32,6 @@ from ui.widgets.video_widget import VideoWidget
 from ui.widgets.status_panel import StatusPanel
 from ui.widgets.event_console import EventConsole
 from ui.widgets.gentl_camera_settings_dialog import GenTLCameraSettingsDialog
-
-
-class _ModelLoaderWorker(QObject):
-    """Worker que carrega o modelo de inferência em uma thread (evita travar a UI)."""
-    finished = Signal(bool)  # True = sucesso
-
-    def __init__(self, inference_engine: InferenceEngine):
-        super().__init__()
-        self._engine = inference_engine
-
-    def run(self) -> None:
-        try:
-            success = self._engine.load_model()
-            self.finished.emit(success)
-        except Exception:
-            self.finished.emit(False)
 
 
 class OperationPage(QWidget):
@@ -83,9 +67,9 @@ class OperationPage(QWidget):
         self._detection_count = 0  # Contador total de detecções
         self._error_count = 0  # Contador total de erros
         
-        # Carregamento assíncrono do modelo (evita travar a UI)
-        self._model_loader_thread: Optional[QThread] = None
-        self._model_loader_worker: Optional[_ModelLoaderWorker] = None
+        # Carregamento do modelo na GUI thread (PyTorch/MPS não é estável em QThread)
+        self._model_loading = False
+        self._shutdown_requested = False
         self._pending_start_source_label: Optional[str] = None
         
         self._setup_ui()
@@ -596,24 +580,19 @@ class OperationPage(QWidget):
         
         source_label = source_labels[source_index]
         
-        # Carrega modelo em segundo plano (evita travar a UI)
+        # Carrega modelo na GUI thread (agendado; evita crash MPS/CUDA em QThread)
         if not self._inference_engine.is_model_loaded:
-            # Se já está carregando (ex.: pré-carregamento), só junta o "Iniciar" ao fim
-            if self._model_loader_thread is not None:
+            if self._model_loading:
                 self._pending_start_source_label = source_label
                 self._play_btn.setText("Carregando modelo...")
                 self._play_btn.setEnabled(False)
                 return
-            self._event_console.add_info("Carregando modelo de detecção... (pode levar 1–2 min na primeira vez)")
+            self._event_console.add_info(
+                "Carregando modelo de detecção... (pode levar 1–2 min na primeira vez)"
+            )
             self._play_btn.setText("Carregando modelo...")
             self._play_btn.setEnabled(False)
-            self._pending_start_source_label = source_label
-            self._model_loader_thread = QThread()
-            self._model_loader_worker = _ModelLoaderWorker(self._inference_engine)
-            self._model_loader_worker.moveToThread(self._model_loader_thread)
-            self._model_loader_thread.started.connect(self._model_loader_worker.run)
-            self._model_loader_worker.finished.connect(self._on_model_load_finished)
-            self._model_loader_thread.start()
+            self._schedule_model_load(pending_start_label=source_label)
             return
         
         self._finish_start_system_after_model(source_label)
@@ -662,19 +641,14 @@ class OperationPage(QWidget):
     
     @Slot(bool)
     def _on_model_load_finished(self, success: bool) -> None:
-        """Chamado quando o carregamento do modelo em segundo plano termina."""
+        """Chamado quando o carregamento do modelo termina."""
+        if self._shutdown_requested:
+            return
         label = self._pending_start_source_label
         self._pending_start_source_label = None
         self._play_btn.setText("▶ Iniciar")
         self._play_btn.setEnabled(True)
-        if self._model_loader_thread is not None:
-            self._model_loader_thread.quit()
-            self._model_loader_thread.wait(5000)
-            self._model_loader_thread.deleteLater()
-            self._model_loader_thread = None
-        self._model_loader_worker = None
         if label is not None:
-            # Fluxo "Iniciar": usuário clicou em Iniciar e esperou o modelo
             if not success:
                 self._event_console.add_error("Falha ao carregar modelo")
                 self._stream_manager.stop()
@@ -682,22 +656,62 @@ class OperationPage(QWidget):
             self._event_console.add_info("Modelo carregado.")
             self._finish_start_system_after_model(label)
         else:
-            # Pré-carregamento em segundo plano (sem clicar Iniciar)
             self.model_preload_finished.emit(success)
-    
-    def start_model_preload(self) -> None:
-        """Inicia o carregamento do modelo em segundo plano (sem bloquear a UI). Ao abrir o app, o modelo já fica pronto para uso."""
+
+    def _schedule_model_load(self, pending_start_label: Optional[str] = None) -> None:
+        """
+        Agenda carregamento do modelo na GUI thread.
+
+        PyTorch (especialmente MPS no macOS) não é seguro quando o modelo é
+        instanciado/movido para device numa QThread secundária.
+        """
         if self._inference_engine.is_model_loaded:
+            if pending_start_label is not None:
+                self._finish_start_system_after_model(pending_start_label)
+            else:
+                self.model_preload_finished.emit(True)
             return
-        if self._model_loader_thread is not None:
+        if self._model_loading:
+            if pending_start_label is not None:
+                self._pending_start_source_label = pending_start_label
             return
-        self._model_loader_thread = QThread()
-        self._model_loader_worker = _ModelLoaderWorker(self._inference_engine)
-        self._model_loader_worker.moveToThread(self._model_loader_thread)
-        self._model_loader_thread.started.connect(self._model_loader_worker.run)
-        self._model_loader_worker.finished.connect(self._on_model_load_finished)
-        self._model_loader_thread.start()
-    
+        self._model_loading = True
+        if pending_start_label is not None:
+            self._pending_start_source_label = pending_start_label
+        QTimer.singleShot(0, self._run_model_load_on_main_thread)
+
+    def _run_model_load_on_main_thread(self) -> None:
+        """Executa load_model na thread principal do Qt."""
+        if not self._model_loading or self._shutdown_requested:
+            self._model_loading = False
+            return
+        try:
+            success = self._inference_engine.load_model()
+        except Exception as e:
+            self._logger.error("model_load_on_main_thread_failed", error=str(e))
+            success = False
+        self._model_loading = False
+        self._on_model_load_finished(success)
+
+    def start_model_preload(self) -> None:
+        """Pré-carrega o modelo após abrir o app (na GUI thread)."""
+        if self._inference_engine.is_model_loaded or self._model_loading:
+            return
+        self._schedule_model_load(pending_start_label=None)
+
+    def shutdown(self) -> None:
+        """Libera recursos ao fechar a aplicação."""
+        self._shutdown_requested = True
+        self._model_loading = False
+        self._pending_start_source_label = None
+        if hasattr(self, "_fps_timer"):
+            self._fps_timer.stop()
+        if self._is_running:
+            self._stop_system()
+        else:
+            self._robot_controller.stop()
+        self._cip_client.shutdown_for_exit()
+
     async def _connect_plc_and_start_robot(self) -> None:
         """
         Conecta ao CLP em modo real por default.

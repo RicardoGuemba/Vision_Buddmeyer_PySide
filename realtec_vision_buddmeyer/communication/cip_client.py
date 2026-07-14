@@ -336,6 +336,20 @@ class CIPClient(QObject):
                 {"ip": ip, "error": str(e)}
             )
     
+    def shutdown_for_exit(self) -> None:
+        """Para timers CLP e libera estado ao encerrar a app (síncrono, não bloqueia)."""
+        self._stop_heartbeat()
+        if self._reconnect_timer is not None:
+            self._reconnect_timer.stop()
+            self._reconnect_timer.deleteLater()
+            self._reconnect_timer = None
+        self._plc = None
+        self._simulated_plc = None
+        if self._state.is_connected:
+            self._update_state(ConnectionStatus.DISCONNECTED)
+            self.disconnected.emit()
+        logger.info("cip_shutdown_for_exit")
+
     async def disconnect(self) -> None:
         """Desconecta do CLP."""
         self._stop_heartbeat()

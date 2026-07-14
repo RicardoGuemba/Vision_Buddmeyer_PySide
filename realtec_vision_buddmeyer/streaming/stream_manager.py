@@ -195,6 +195,8 @@ class StreamManager(QObject):
         # Para worker
         if self._worker is not None:
             self._worker.stop()
+            if self._worker.isRunning():
+                self._worker.wait(5000)
             self._worker.deleteLater()
             self._worker = None
         
