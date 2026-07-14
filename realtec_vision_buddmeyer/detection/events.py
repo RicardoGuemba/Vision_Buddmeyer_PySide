@@ -144,12 +144,31 @@ class Detection:
 
 @dataclass
 class DetectionResult:
-    """Resultado de uma inferência (todas as detecções de 1 frame)."""
+    """Resultado de uma inferência (todas as detecções de 1 frame).
+
+    Diagnóstico:
+        max_query_score: maior score (softmax sobre classes "reais") visto
+            entre todas as queries do modelo, *antes* do filtro de threshold
+            e de target_classes. Útil para distinguir três cenários quando
+            `count == 0`:
+              - max_query_score is None  -> diagnóstico não computado
+              - max_query_score < threshold -> modelo "vê" algo mas com baixa
+                confiança; provavelmente threshold alto demais para a cena.
+              - max_query_score >= threshold -> a detecção foi descartada por
+                outro filtro (target_classes, min_mask_pixels, etc.).
+        rejected_by_class: quantidade de segmentos cujo score >= threshold
+            mas foram descartados por não pertencerem a `target_classes`.
+        raw_segment_count: número de segmentos retornados pelo
+            post_process_instance_segmentation antes de aplicar filtros locais.
+    """
 
     detections: List[Detection] = field(default_factory=list)
     inference_time_ms: float = 0.0
     frame_id: int = 0
     timestamp: datetime = field(default_factory=datetime.now)
+    max_query_score: Optional[float] = None
+    rejected_by_class: int = 0
+    raw_segment_count: int = 0
 
     @property
     def best_detection(self) -> Optional[Detection]:

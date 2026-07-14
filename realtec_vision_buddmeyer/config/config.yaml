@@ -16,7 +16,12 @@ streaming:
 detection:
   model_path: model_best
   default_model: model_best
-  confidence_threshold: 0.71
+  # confidence_threshold é aplicado por post_process_instance_segmentation do
+  # Mask2Former. Valores típicos do estado da arte: 0.5 (default) a 0.7.
+  # Subir para 0.71 só com cena bem controlada e iluminação calibrada — caso
+  # contrário, todas as queries reais ficam abaixo do corte e o sistema
+  # silencia. Use os logs "inference_diagnostic" (INFO) para calibrar.
+  confidence_threshold: 0.5
   max_detections: 10
   target_classes:
     - Embalagem
@@ -38,7 +43,7 @@ preprocess:
   roi_unit: px
   roi_calibration_mm_per_px: 10.0
 cip:
-  ip: 187.99.124.229
+  ip: 192.168.1.10
   port: 44818
   connection_timeout: 10.0
   timeout_ms: 10000

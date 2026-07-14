@@ -45,6 +45,8 @@ class InferenceWorker(QThread):
         postprocessor: PostProcessor,
         device: str,
         target_fps: float = 15.0,
+        diagnostic_log_interval: int = 25,
+        diagnostic_dump_dir: Optional[str] = None,
     ):
         super().__init__()
         
@@ -53,6 +55,16 @@ class InferenceWorker(QThread):
         self._postprocessor = postprocessor
         self._device = device
         self._target_fps = target_fps
+        # A cada N frames, emite um log INFO de diagnóstico mesmo que não
+        # haja detecções, para que o operador veja o que o modelo "vê".
+        self._diagnostic_log_interval = max(1, int(diagnostic_log_interval))
+        # Diretório opcional para salvar UMA amostra de frame quando o
+        # diagnóstico aciona WARNING (ajuda a verificar visualmente se a
+        # câmera está enviando uma imagem válida — preto, saturada, etc.).
+        self._diagnostic_dump_dir: Optional[Path] = (
+            Path(diagnostic_dump_dir) if diagnostic_dump_dir else None
+        )
+        self._dumped_diagnostic_sample = False
         
         self._running = False
         self._paused = False
@@ -62,6 +74,43 @@ class InferenceWorker(QThread):
         self._mutex = QMutex()
         self._pause_condition = QWaitCondition()
         self._frame_condition = QWaitCondition()
+
+        # Estatísticas agregadas para diagnóstico.
+        self._frames_processed = 0
+        self._frames_with_detection = 0
+        self._frames_with_segments_above_threshold = 0
+        self._frames_rejected_by_class = 0
+        self._sum_inference_ms = 0.0
+        self._max_query_score_seen = 0.0
+        self._last_diagnostic_log_frame = 0
+        # Estatísticas do conteúdo do frame (em uint8 BGR) para detectar
+        # imagens pretas/saturadas/sem variação que silenciosamente fariam
+        # a inferência produzir scores ínfimos.
+        self._sum_frame_mean = 0.0
+        self._sum_frame_std = 0.0
+        self._min_frame_mean = float("inf")
+        self._max_frame_mean = 0.0
+        # Conta apenas frames cujo conteúdo foi efetivamente medido (não
+        # confundir com `_frames_processed`, que conta resultados de inferência;
+        # em testes unitários, frames podem não ser passados).
+        self._frame_stat_count = 0
+        # Cache da última amostra para potencial dump diagnóstico.
+        self._last_sample_frame: Optional[np.ndarray] = None
+        # Hashes (CRC32) dos frames vistos na janela atual para detectar
+        # frame congelado (pipeline travado entregando o mesmo buffer N
+        # vezes para a inferência) — sintoma clássico de aliasing ou de
+        # captura travada.
+        self._unique_frame_hashes_window = 0
+        self._last_frame_hash_window: Optional[int] = None
+        self._last_frame_hash_overall: Optional[int] = None
+        # Dump da primeira inferência (independente de WARNING) para que o
+        # operador veja exatamente o que a câmera está entregando ao modelo
+        # quando o sistema "começa a operar". Diagnóstico mais útil em
+        # campo do que ler logs estruturados.
+        self._first_frame_dumped = False
+        # Quantos frames iniciais imprimimos stats por-frame em INFO; após
+        # isso voltamos ao log periódico agregado para não poluir o log.
+        self._verbose_first_frames = 5
     
     def set_frame(self, frame: np.ndarray, frame_id: int) -> None:
         """Define o frame para inferência."""
@@ -99,11 +148,14 @@ class InferenceWorker(QThread):
             start_time = time.perf_counter()
             
             try:
+                self._maybe_dump_first_frame(frame, frame_id)
                 result = self._run_inference(frame, frame_id)
-                
+
                 if result is not None:
+                    self._update_diagnostic_stats(result, frame)
+                    self._maybe_log_per_frame(result, frame, frame_id)
                     self.detection_ready.emit(result)
-                    
+
             except Exception as e:
                 logger.error("inference_error", error=str(e))
                 self.error_occurred.emit(str(e))
@@ -113,8 +165,310 @@ class InferenceWorker(QThread):
             sleep_time = frame_interval - elapsed
             if sleep_time > 0:
                 time.sleep(sleep_time)
-        
+
+        # Log final agregado para garantir que não haja "fim silencioso"
+        # de uma sessão sem detecções.
+        self._emit_diagnostic_log(force=True)
         logger.info("inference_worker_stopped")
+
+    def _update_diagnostic_stats(
+        self,
+        result: DetectionResult,
+        frame: Optional[np.ndarray] = None,
+    ) -> None:
+        """Acumula estatísticas e emite log periódico de diagnóstico."""
+        self._frames_processed += 1
+        self._sum_inference_ms += float(result.inference_time_ms or 0.0)
+        if result.has_detections:
+            self._frames_with_detection += 1
+        if result.raw_segment_count > 0:
+            self._frames_with_segments_above_threshold += 1
+        if result.rejected_by_class > 0:
+            self._frames_rejected_by_class += 1
+        if result.max_query_score is not None:
+            if result.max_query_score > self._max_query_score_seen:
+                self._max_query_score_seen = float(result.max_query_score)
+
+        if frame is not None and frame.size > 0:
+            try:
+                fmean = float(frame.mean())
+                fstd = float(frame.std())
+                self._sum_frame_mean += fmean
+                self._sum_frame_std += fstd
+                self._frame_stat_count += 1
+                if fmean < self._min_frame_mean:
+                    self._min_frame_mean = fmean
+                if fmean > self._max_frame_mean:
+                    self._max_frame_mean = fmean
+                # Cache barato para um eventual dump diagnóstico (apenas referência).
+                self._last_sample_frame = frame
+                # Hash CRC32 sobre uma amostra do buffer para detectar frame
+                # congelado/duplicado entre captura e inferência. Usar a
+                # imagem inteira é caro (640x480x3 = 921KB); amostramos para
+                # manter custo desprezível e mesmo assim detectar mudanças.
+                fhash = self._compute_frame_hash(frame)
+                if fhash != self._last_frame_hash_window:
+                    self._unique_frame_hashes_window += 1
+                    self._last_frame_hash_window = fhash
+                self._last_frame_hash_overall = fhash
+            except Exception:
+                pass
+
+        if (self._frames_processed - self._last_diagnostic_log_frame) >= self._diagnostic_log_interval:
+            self._emit_diagnostic_log(force=False)
+
+    @staticmethod
+    def _compute_frame_hash(frame: np.ndarray) -> int:
+        """
+        Hash leve de um frame (uint8 BGR) suficiente para detectar mudanças.
+        Não é criptográfico — só serve como assinatura para o operador
+        verificar se o pipeline está entregando frames novos. Amostra a
+        cada 16ª linha para custar O(H/16 * W * C) ao invés de O(H*W*C).
+        """
+        try:
+            sample = frame[::16, :, :] if frame.ndim == 3 else frame[::16, :]
+            return int(np.uint32(hash(sample.tobytes())) & 0xFFFFFFFF)
+        except Exception:
+            return 0
+
+    def _maybe_dump_first_frame(self, frame: np.ndarray, frame_id: int) -> None:
+        """
+        Salva no disco o PRIMEIRO frame que chega à inferência (apenas uma
+        vez por sessão). Isso é independente de qualquer WARNING e serve
+        como evidência visual direta de "o que a câmera está entregando
+        ao modelo quando o app começa a operar". Em campo, é a forma mais
+        rápida de detectar:
+          - Câmera errada selecionada (continuity camera reordenou índice)
+          - Lente coberta/embalagem fora do FOV
+          - Iluminação/exposição quebradas
+          - Aliasing de buffer entregando lixo
+        """
+        if self._first_frame_dumped:
+            return
+        if self._diagnostic_dump_dir is None:
+            return
+        if frame is None or frame.size == 0:
+            return
+        try:
+            import cv2
+
+            self._diagnostic_dump_dir.mkdir(parents=True, exist_ok=True)
+            ts = time.strftime("%Y%m%d_%H%M%S")
+            out_path = self._diagnostic_dump_dir / f"first_inference_frame_{ts}.png"
+            cv2.imwrite(str(out_path), frame)
+            self._first_frame_dumped = True
+            logger.info(
+                "first_inference_frame_dumped",
+                path=str(out_path),
+                frame_id=frame_id,
+                shape=list(frame.shape),
+                mean=round(float(frame.mean()), 2),
+                std=round(float(frame.std()), 2),
+                hint=(
+                    "abra esta imagem para conferir se a câmera está "
+                    "entregando o que você esperava (FOV, exposição, etc.)"
+                ),
+            )
+        except Exception as exc:
+            logger.warning("first_inference_frame_dump_failed", error=str(exc))
+
+    def _maybe_log_per_frame(
+        self,
+        result: DetectionResult,
+        frame: Optional[np.ndarray],
+        frame_id: int,
+    ) -> None:
+        """
+        Emite log INFO detalhado nos primeiros N frames da sessão, com
+        estatísticas do frame e o max_query_score do modelo. Permite ao
+        operador ver imediatamente o que a inferência está vendo, sem
+        precisar esperar o log periódico (`inference_diagnostic`).
+        """
+        if self._frames_processed > self._verbose_first_frames:
+            return
+        if frame is None or frame.size == 0:
+            logger.info(
+                "inference_first_frames",
+                seq=self._frames_processed,
+                frame_id=frame_id,
+                detections=result.count,
+                max_query_score=(
+                    round(float(result.max_query_score), 4)
+                    if result.max_query_score is not None else None
+                ),
+                inference_ms=round(float(result.inference_time_ms or 0.0), 2),
+            )
+            return
+        logger.info(
+            "inference_first_frames",
+            seq=self._frames_processed,
+            frame_id=frame_id,
+            detections=result.count,
+            max_query_score=(
+                round(float(result.max_query_score), 4)
+                if result.max_query_score is not None else None
+            ),
+            frame_mean=round(float(frame.mean()), 2),
+            frame_std=round(float(frame.std()), 2),
+            frame_min=int(frame.min()),
+            frame_max=int(frame.max()),
+            frame_hash=self._last_frame_hash_overall,
+            inference_ms=round(float(result.inference_time_ms or 0.0), 2),
+        )
+
+    def _emit_diagnostic_log(self, force: bool) -> None:
+        """Emite log INFO agregado e zera a janela de medição."""
+        if self._frames_processed == 0:
+            return
+        if not force and self._frames_processed == self._last_diagnostic_log_frame:
+            return
+        window = self._frames_processed - self._last_diagnostic_log_frame
+        avg_ms = self._sum_inference_ms / max(1, window)
+        has_frame_stats = self._frame_stat_count > 0
+        avg_frame_mean = (
+            self._sum_frame_mean / self._frame_stat_count
+            if has_frame_stats else None
+        )
+        avg_frame_std = (
+            self._sum_frame_std / self._frame_stat_count
+            if has_frame_stats else None
+        )
+        threshold = getattr(self._postprocessor, "confidence_threshold", None)
+
+        # Heurística: identifica situações em que o modelo silenciosamente "não vê" nada.
+        no_detections = self._frames_with_detection == 0
+        suspicious_threshold = (
+            no_detections
+            and threshold is not None
+            and 0.0 < self._max_query_score_seen < float(threshold)
+        )
+        # Frame "preto"/uniforme = câmera sem imagem útil (lente coberta, sem
+        # auto-exposição, formato errado). std<5 em uint8 indica imagem quase
+        # constante; mean<5 indica frame totalmente escuro. Só avaliamos
+        # quando temos estatísticas reais do frame (em testes podem faltar).
+        suspicious_frame = (
+            no_detections
+            and has_frame_stats
+            and (avg_frame_mean < 5.0 or avg_frame_std < 5.0)
+        )
+        # max_query_score próximo de zero = modelo confiante de que NÃO há embalagem.
+        # Pode ser cena vazia, oclusão, foco/exposição ruim, ou modelo fora do domínio.
+        suspicious_zero_score = (
+            no_detections
+            and 0.0 < self._max_query_score_seen < 0.05
+        )
+
+        # Frames "congelados": pipeline entregou poucos hashes únicos quando
+        # comparado ao número de frames processados. Sintoma típico de
+        # aliasing de buffer ou de captura travada (a câmera/USB está enviando
+        # o mesmo conteúdo repetidamente para a inferência).
+        suspicious_frozen = (
+            no_detections
+            and has_frame_stats
+            and window >= 5
+            and self._unique_frame_hashes_window <= max(1, window // 5)
+        )
+
+        suspicious = (
+            suspicious_threshold
+            or suspicious_frame
+            or suspicious_zero_score
+            or suspicious_frozen
+        )
+        hint = None
+        # Ordem de prioridade do hint (mais específico primeiro):
+        # 1) pipeline entregando o mesmo frame (frozen) — bug de captura/aliasing
+        # 2) frame inválido (câmera fundamental quebrada)
+        # 3) score ~0 (modelo confiante de que não há embalagem) — geralmente
+        #    indica FOV vazio ou modelo fora de domínio, NÃO threshold mal calibrado
+        # 4) score abaixo do threshold (threshold só) — calibração de operação
+        if suspicious_frozen:
+            hint = (
+                "pipeline entregando o mesmo frame repetido à inferência "
+                "(bug de captura/aliasing? câmera travada?). Verifique se o "
+                "stream está rodando e se o índice da câmera é o correto."
+            )
+        elif suspicious_frame:
+            hint = (
+                "frame parece preto ou sem variação (lente coberta? câmera USB sem "
+                "imagem? formato errado?). Verifique a janela de Operação."
+            )
+        elif suspicious_zero_score:
+            hint = (
+                "modelo confiante de que NÃO há embalagem no frame. Verifique "
+                "se a embalagem está no FOV, com foco e iluminação adequados; "
+                "ou se o modelo carregado é o correto para este produto."
+            )
+        elif suspicious_threshold:
+            hint = (
+                "max_query_score abaixo do threshold; considere reduzir "
+                "detection.confidence_threshold ou checar iluminação/ROI"
+            )
+
+        log_fn = logger.warning if suspicious else logger.info
+        log_fn(
+            "inference_diagnostic",
+            frames=window,
+            detections=self._frames_with_detection,
+            raw_segments_frames=self._frames_with_segments_above_threshold,
+            rejected_by_class_frames=self._frames_rejected_by_class,
+            avg_inference_ms=round(avg_ms, 2),
+            max_query_score=round(self._max_query_score_seen, 4),
+            confidence_threshold=threshold,
+            avg_frame_mean=(round(avg_frame_mean, 2) if has_frame_stats else None),
+            avg_frame_std=(round(avg_frame_std, 2) if has_frame_stats else None),
+            min_frame_mean=(
+                round(self._min_frame_mean, 2)
+                if self._min_frame_mean != float("inf") else None
+            ),
+            max_frame_mean=(
+                round(self._max_frame_mean, 2) if has_frame_stats else None
+            ),
+            unique_frame_hashes=self._unique_frame_hashes_window,
+            last_frame_hash=self._last_frame_hash_overall,
+            hint=hint,
+        )
+
+        # Em caso de WARNING, salva uma amostra do último frame para inspeção visual
+        # (apenas uma vez por sessão, para não encher o disco).
+        if (
+            suspicious
+            and self._diagnostic_dump_dir is not None
+            and not self._dumped_diagnostic_sample
+            and self._last_sample_frame is not None
+        ):
+            try:
+                import cv2
+
+                self._diagnostic_dump_dir.mkdir(parents=True, exist_ok=True)
+                ts = time.strftime("%Y%m%d_%H%M%S")
+                out_path = self._diagnostic_dump_dir / f"diagnostic_sample_{ts}.png"
+                cv2.imwrite(str(out_path), self._last_sample_frame)
+                logger.warning(
+                    "diagnostic_sample_dumped",
+                    path=str(out_path),
+                    hint=(
+                        "abra esta imagem para verificar visualmente o que a câmera "
+                        "está enviando ao modelo no momento do diagnóstico"
+                    ),
+                )
+                self._dumped_diagnostic_sample = True
+            except Exception as exc:
+                logger.warning("diagnostic_sample_dump_failed", error=str(exc))
+
+        self._last_diagnostic_log_frame = self._frames_processed
+        self._frames_with_detection = 0
+        self._frames_with_segments_above_threshold = 0
+        self._frames_rejected_by_class = 0
+        self._sum_inference_ms = 0.0
+        self._max_query_score_seen = 0.0
+        self._sum_frame_mean = 0.0
+        self._sum_frame_std = 0.0
+        self._frame_stat_count = 0
+        self._min_frame_mean = float("inf")
+        self._max_frame_mean = 0.0
+        self._unique_frame_hashes_window = 0
+        self._last_frame_hash_window = None
     
     def _run_inference(self, frame: np.ndarray, frame_id: int) -> Optional[DetectionResult]:
         """Executa inferência em um frame."""
@@ -382,13 +736,17 @@ class InferenceEngine(QObject):
             return False
         
         try:
-            # Cria worker
+            # Diretório de dump diagnóstico: ./logs/diagnostic_samples/
+            # (relativo ao cwd no momento da execução do app).
+            dump_dir = Path("logs") / "diagnostic_samples"
+
             self._worker = InferenceWorker(
                 model=self._loader.model,
                 processor=self._loader.processor,
                 postprocessor=self._postprocessor,
                 device=self._loader.device,
                 target_fps=self._settings.detection.inference_fps,
+                diagnostic_dump_dir=str(dump_dir),
             )
             self._worker.detection_ready.connect(self._on_detection_ready)
             self._worker.error_occurred.connect(self._on_error)

@@ -85,6 +85,15 @@ class SegmentationPostProcessor:
             original (não do input do modelo). O processor redimensiona
             as máscaras para esse tamanho.
         """
+        # Diagnóstico cru: maior probabilidade de classe "real" entre todas
+        # as queries (independente do threshold). Permite saber, mesmo quando
+        # nenhuma detecção é emitida, se o modelo está "vendo" algo.
+        max_query_score = self._compute_max_query_score(outputs)
+
+        # Normaliza id2label para chaves int — defensivo contra configs
+        # carregados do JSON com chaves string ("0" -> "Embalagem").
+        id2label_norm = self._normalize_id2label(id2label)
+
         try:
             target_sizes_list = target_sizes.tolist() if hasattr(target_sizes, "tolist") else target_sizes
 
@@ -102,6 +111,7 @@ class SegmentationPostProcessor:
                 detections=[],
                 inference_time_ms=inference_time_ms,
                 frame_id=frame_id,
+                max_query_score=max_query_score,
             )
 
         if not results:
@@ -109,18 +119,22 @@ class SegmentationPostProcessor:
                 detections=[],
                 inference_time_ms=inference_time_ms,
                 frame_id=frame_id,
+                max_query_score=max_query_score,
             )
 
         result = results[0]
 
         segmentation: Optional[torch.Tensor] = result.get("segmentation")
         segments_info: List[Dict[str, Any]] = result.get("segments_info", []) or []
+        raw_segment_count = len(segments_info)
 
         if segmentation is None or not segments_info:
             return DetectionResult(
                 detections=[],
                 inference_time_ms=inference_time_ms,
                 frame_id=frame_id,
+                max_query_score=max_query_score,
+                raw_segment_count=raw_segment_count,
             )
 
         seg_np = segmentation.detach().cpu().numpy() if isinstance(segmentation, torch.Tensor) else np.asarray(segmentation)
@@ -130,6 +144,7 @@ class SegmentationPostProcessor:
             binary_maps = seg_np.astype(bool)
 
         detections: List[Detection] = []
+        rejected_by_class = 0
 
         candidates = sorted(
             segments_info,
@@ -143,9 +158,10 @@ class SegmentationPostProcessor:
                 continue
 
             label_id = int(seg.get("label_id", -1))
-            class_name = id2label.get(label_id, f"class_{label_id}") if id2label else f"class_{label_id}"
+            class_name = id2label_norm.get(label_id, f"class_{label_id}")
 
             if self.target_classes and class_name not in self.target_classes:
+                rejected_by_class += 1
                 continue
 
             mask = self._extract_mask_for_segment(seg, seg_np, binary_maps)
@@ -177,11 +193,65 @@ class SegmentationPostProcessor:
             if len(detections) >= self.max_detections:
                 break
 
+        # Aviso para o operador: o modelo emitiu segmentos acima do threshold
+        # mas todos foram rejeitados pela whitelist de classes. Sintoma
+        # clássico de target_classes desalinhada com id2label do checkpoint.
+        if not detections and rejected_by_class > 0:
+            logger.warning(
+                "all_segments_rejected_by_class_filter",
+                rejected=rejected_by_class,
+                target_classes=self.target_classes,
+                id2label=dict(list(id2label_norm.items())[:10]),
+            )
+
         return DetectionResult(
             detections=detections,
             inference_time_ms=inference_time_ms,
             frame_id=frame_id,
+            max_query_score=max_query_score,
+            rejected_by_class=rejected_by_class,
+            raw_segment_count=raw_segment_count,
         )
+
+    @staticmethod
+    def _normalize_id2label(id2label: Optional[Dict[Any, str]]) -> Dict[int, str]:
+        """Garante chaves inteiras em id2label (HF carrega de JSON com str)."""
+        if not id2label:
+            return {}
+        normalized: Dict[int, str] = {}
+        for k, v in id2label.items():
+            try:
+                normalized[int(k)] = str(v)
+            except (TypeError, ValueError):
+                continue
+        return normalized
+
+    @staticmethod
+    def _compute_max_query_score(outputs: Any) -> Optional[float]:
+        """
+        Calcula a maior probabilidade de classe (softmax sobre classes
+        reais, ignorando "no object") entre todas as queries do batch.
+
+        Retorna None se os logits não estiverem disponíveis na saída.
+        """
+        try:
+            class_logits = getattr(outputs, "class_queries_logits", None)
+            if class_logits is None:
+                # Fallback: object detection clássico
+                class_logits = getattr(outputs, "logits", None)
+            if class_logits is None or not isinstance(class_logits, torch.Tensor):
+                return None
+            if class_logits.numel() == 0:
+                return None
+            with torch.no_grad():
+                probs = class_logits.softmax(dim=-1)
+                # Última coluna = "no object". Pegamos só classes reais.
+                real_class_probs = probs[..., :-1]
+                if real_class_probs.numel() == 0:
+                    return None
+                return float(real_class_probs.max().item())
+        except Exception:
+            return None
 
     def _extract_mask_for_segment(
         self,

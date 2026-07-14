@@ -97,8 +97,20 @@ class BaseSourceAdapter(ABC):
         return self._is_open
     
     def _create_frame_info(self, frame: np.ndarray) -> FrameInfo:
-        """Cria FrameInfo a partir de um frame."""
+        """Cria FrameInfo a partir de um frame.
+
+        Faz uma cópia defensiva (`np.ascontiguousarray`) para garantir que o
+        frame entregue ao restante do pipeline (UI, MJPEG, inferência) é um
+        buffer independente do que o backend OpenCV/Harvester possa reutilizar
+        em chamadas subsequentes a `read()`. Custo típico ~900 KB por frame
+        640x480x3 — desprezível e elimina toda uma classe de bugs sutis de
+        aliasing cross-thread.
+        """
         self._frame_count += 1
+        if frame is not None and not frame.flags["OWNDATA"]:
+            frame = np.ascontiguousarray(frame)
+        elif frame is not None:
+            frame = frame.copy()
         return FrameInfo.from_frame(
             frame=frame,
             frame_id=self._frame_count,
@@ -213,12 +225,30 @@ class VideoFileAdapter(BaseSourceAdapter):
 class USBCameraAdapter(BaseSourceAdapter):
     """
     Adaptador para câmeras USB/USB-C.
+
+    Aplica um warmup ativo (descartando frames pretos) após `open()` para
+    evitar que a primeira(s) imagem(ns) capturada(s) — tipicamente preta(s)
+    em câmeras macOS/AVFoundation enquanto o auto-exposure não estabilizou —
+    cheguem ao pipeline de inferência e bloqueiem a detecção até que a
+    iluminação interna da câmera se acomode.
     """
-    
+
+    # Heurística empírica para frame "preto/sem dados" em uint8 BGR.
+    # mean<5 indica imagem totalmente escura; std<3 indica frame sem variação.
+    # Um frame normal de cena iluminada tem mean>=20 e std>=10.
+    _WARMUP_MIN_MEAN = 5.0
+    _WARMUP_MIN_STD = 3.0
+    # Limite máximo de tentativas/segundos do warmup. Em câmeras lentas a
+    # estabilização do AE pode levar até ~1.5s; usamos 60 tentativas a ~30 FPS
+    # (~2s) com sleep curto entre frames falhos para dar tempo ao backend.
+    _WARMUP_MAX_FRAMES = 60
+    _WARMUP_TIMEOUT_S = 3.0
+    _WARMUP_RETRY_SLEEP_S = 0.05
+
     def __init__(self, camera_index: int = 0, width: int = 640, height: int = 480):
         """
         Inicializa o adaptador.
-        
+
         Args:
             camera_index: Índice da câmera USB
             width: Largura desejada
@@ -228,33 +258,34 @@ class USBCameraAdapter(BaseSourceAdapter):
         self.camera_index = camera_index
         self.width = width
         self.height = height
-    
+
     def open(self) -> bool:
-        """Abre a câmera USB."""
+        """Abre a câmera USB (com warmup ativo)."""
         # DirectShow (CAP_DSHOW) só existe no Windows; Linux/macOS usam V4L2/AVFoundation
         if platform.system() == "Windows":
             self._capture = cv2.VideoCapture(self.camera_index, cv2.CAP_DSHOW)
         else:
             self._capture = cv2.VideoCapture(self.camera_index)
-        
+
         if not self._capture.isOpened():
             # Fallback para backend padrão (ex.: V4L2 no Linux)
             self._capture = cv2.VideoCapture(self.camera_index)
-        
+
         if not self._capture.isOpened():
             logger.error("usb_camera_open_failed", index=self.camera_index)
             raise StreamSourceError(
                 f"Não foi possível abrir a câmera USB: {self.camera_index}",
                 {"camera_index": self.camera_index}
             )
-        
-        # Configura resolução
+
         self._capture.set(cv2.CAP_PROP_FRAME_WIDTH, self.width)
         self._capture.set(cv2.CAP_PROP_FRAME_HEIGHT, self.height)
-        
+
+        self._warmup_capture()
+
         self._is_open = True
         self._start_time = time.time()
-        
+
         props = self.get_properties()
         logger.info(
             "usb_camera_opened",
@@ -262,8 +293,76 @@ class USBCameraAdapter(BaseSourceAdapter):
             width=props["width"],
             height=props["height"],
         )
-        
+
         return True
+
+    def _warmup_capture(self) -> None:
+        """
+        Drena frames até que o backend produza uma imagem "viva" (não-preta)
+        ou até esgotar o orçamento. Não levanta exceção em caso de timeout —
+        apenas loga; o pipeline downstream tem diagnósticos próprios para
+        cobrir o cenário (extremamente raro) de câmera permanentemente preta.
+        """
+        if self._capture is None:
+            return
+
+        start = time.perf_counter()
+        attempts = 0
+        good_frames_seen = 0
+        last_mean = 0.0
+        last_std = 0.0
+        # Algumas câmeras precisam de 1-2 frames "pretos" iniciais antes de
+        # entregarem imagem útil (warmup do sensor + AE/AWB). Esperamos por
+        # 2 frames consecutivos não-pretos para garantir que a câmera saiu
+        # do estado de inicialização (evita "false positive" se um único
+        # frame teve uma luz piscando).
+        while attempts < self._WARMUP_MAX_FRAMES:
+            elapsed = time.perf_counter() - start
+            if elapsed > self._WARMUP_TIMEOUT_S:
+                break
+
+            ok, frame = self._capture.read()
+            attempts += 1
+            if not ok or frame is None:
+                time.sleep(self._WARMUP_RETRY_SLEEP_S)
+                continue
+
+            try:
+                last_mean = float(frame.mean())
+                last_std = float(frame.std())
+            except Exception:
+                last_mean = 0.0
+                last_std = 0.0
+
+            if last_mean >= self._WARMUP_MIN_MEAN and last_std >= self._WARMUP_MIN_STD:
+                good_frames_seen += 1
+                if good_frames_seen >= 2:
+                    logger.info(
+                        "usb_camera_warmup_ok",
+                        index=self.camera_index,
+                        attempts=attempts,
+                        elapsed_ms=round(elapsed * 1000, 1),
+                        last_mean=round(last_mean, 2),
+                        last_std=round(last_std, 2),
+                    )
+                    return
+            else:
+                good_frames_seen = 0
+                time.sleep(self._WARMUP_RETRY_SLEEP_S)
+
+        logger.warning(
+            "usb_camera_warmup_timeout",
+            index=self.camera_index,
+            attempts=attempts,
+            elapsed_ms=round((time.perf_counter() - start) * 1000, 1),
+            last_mean=round(last_mean, 2),
+            last_std=round(last_std, 2),
+            hint=(
+                "câmera continuou entregando frames pretos/uniformes após o warmup; "
+                "verifique tampa da lente, conexão USB, ou se o índice da câmera "
+                "está correto (continuity camera/iSight pode ter reordenado)"
+            ),
+        )
     
     def read(self) -> Optional[FrameInfo]:
         """Lê um frame da câmera."""
