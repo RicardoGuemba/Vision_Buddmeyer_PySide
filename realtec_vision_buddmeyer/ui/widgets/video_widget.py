@@ -34,7 +34,9 @@ class VideoWidget(QWidget):
         super().__init__(parent)
         
         self._current_frame: Optional[np.ndarray] = None
+        self._current_result: Optional[DetectionResult] = None
         self._current_detections: List[Detection] = []
+        self._pick_target: Optional[Detection] = None
         self._show_overlay = True
         self._show_fps = True
         self._current_fps = 0.0
@@ -93,11 +95,16 @@ class VideoWidget(QWidget):
     def update_detections(self, result: DetectionResult) -> None:
         """
         Atualiza as detecções exibidas.
-        
-        Args:
-            result: Resultado da detecção
+
+        Exibe todas com conf >= display_confidence_threshold;
+        destaca o alvo de pick (best_for_plc).
         """
-        self._current_detections = result.detections
+        settings = get_settings()
+        display_threshold = settings.detection.display_confidence_threshold
+        plc_threshold = settings.detection.plc_confidence_threshold
+        self._current_result = result
+        self._current_detections = result.visible_detections(display_threshold)
+        self._pick_target = result.best_for_plc(plc_threshold)
         self.update()
     
     def set_fps(self, fps: float) -> None:
@@ -119,7 +126,9 @@ class VideoWidget(QWidget):
     def clear(self) -> None:
         """Limpa o widget."""
         self._current_frame = None
+        self._current_result = None
         self._current_detections = []
+        self._pick_target = None
         self._cached_pixmap = None
         self._cached_paint_size = None
         self._cached_frame_shape = None
@@ -212,74 +221,88 @@ class VideoWidget(QWidget):
         if not self._current_detections:
             return
 
-        # Prefere a detecção com maior score combinado (confiança + área) quando disponível
-        best_detection = self._select_best(self._current_detections)
-        color = self._get_color_for_confidence(best_detection.confidence)
+        for detection in self._current_detections:
+            is_pick = detection is self._pick_target
+            self._draw_single_detection(
+                painter, detection, offset_x, offset_y, scale_x, scale_y, is_pick=is_pick
+            )
 
-        # Bounding box
-        bbox = best_detection.bbox
+    def _draw_single_detection(
+        self,
+        painter: QPainter,
+        detection: Detection,
+        offset_x: int,
+        offset_y: int,
+        scale_x: float,
+        scale_y: float,
+        is_pick: bool = False,
+    ) -> None:
+        """Desenha uma detecção (máscara/contorno, centróide, eixo, labels)."""
+        color = QColor(0, 255, 0) if is_pick else self._get_color_for_confidence(detection.confidence)
+        pen_width = 3 if is_pick else 2
+
+        bbox = detection.bbox
         x1 = int(bbox.x1 * scale_x) + offset_x
         y1 = int(bbox.y1 * scale_y) + offset_y
         x2 = int(bbox.x2 * scale_x) + offset_x
         y2 = int(bbox.y2 * scale_y) + offset_y
 
-        # Overlay da máscara (contorno) quando existir
-        if best_detection.has_mask and best_detection.mask is not None:
+        if detection.has_mask and detection.mask is not None:
             self._draw_mask_contour(
-                painter, best_detection.mask, color, offset_x, offset_y, scale_x, scale_y,
+                painter, detection.mask, color, offset_x, offset_y, scale_x, scale_y,
             )
         else:
-            pen = QPen(color, 3)
+            pen = QPen(color, pen_width)
             painter.setPen(pen)
             painter.setBrush(Qt.NoBrush)
             painter.drawRect(x1, y1, x2 - x1, y2 - y1)
 
-        # Centroide (prioriza o do mask quando existir)
-        cx_f, cy_f = best_detection.centroid
+        cx_f, cy_f = detection.centroid
         cx = int(cx_f * scale_x) + offset_x
         cy = int(cy_f * scale_y) + offset_y
+        radius = 12 if is_pick else 10
 
         painter.setBrush(QBrush(color))
         painter.setPen(QPen(Qt.white, 2))
-        painter.drawEllipse(cx - 10, cy - 10, 20, 20)
-        painter.setPen(QPen(Qt.black, 2))
-        painter.drawLine(cx - 8, cy, cx + 8, cy)
-        painter.drawLine(cx, cy - 8, cx, cy + 8)
-
-        # Eixo maior (vetor que indica orientação da embalagem)
-        if best_detection.has_orientation:
-            self._draw_major_axis(
-                painter, best_detection, color, offset_x, offset_y, scale_x, scale_y,
-            )
-
-        # Centroide limitado ao ROI (amarelo)
-        roi = get_settings().preprocess.roi
-        if roi is not None and len(roi) == 4:
-            clamped_x, clamped_y = clamp_centroid_to_roi(
-                cx_f, cy_f, tuple(roi)
-            )
-            cx_clamped = int(clamped_x * scale_x) + offset_x
-            cy_clamped = int(clamped_y * scale_y) + offset_y
-            yellow = QColor(255, 255, 0)
-            painter.setBrush(QBrush(yellow))
+        painter.drawEllipse(cx - radius, cy - radius, radius * 2, radius * 2)
+        if is_pick:
             painter.setPen(QPen(Qt.black, 2))
-            size = 12
-            diamond = QPolygonF([
-                QPointF(cx_clamped, cy_clamped - size),
-                QPointF(cx_clamped + size, cy_clamped),
-                QPointF(cx_clamped, cy_clamped + size),
-                QPointF(cx_clamped - size, cy_clamped),
-            ])
-            painter.drawPolygon(diamond)
+            painter.drawLine(cx - 8, cy, cx + 8, cy)
+            painter.drawLine(cx, cy - 8, cx, cy + 8)
 
-        # Labels
-        label = f"{best_detection.class_name} {best_detection.confidence:.0%}"
-        coord_label = f"({cx_f:.0f}, {cy_f:.0f})"
+        if detection.has_orientation:
+            self._draw_major_axis(
+                painter, detection, color, offset_x, offset_y, scale_x, scale_y,
+            )
+
+        if is_pick:
+            roi = get_settings().preprocess.roi
+            if roi is not None and len(roi) == 4:
+                clamped_x, clamped_y = clamp_centroid_to_roi(cx_f, cy_f, tuple(roi))
+                cx_clamped = int(clamped_x * scale_x) + offset_x
+                cy_clamped = int(clamped_y * scale_y) + offset_y
+                yellow = QColor(255, 255, 0)
+                painter.setBrush(QBrush(yellow))
+                painter.setPen(QPen(Qt.black, 2))
+                size = 12
+                diamond = QPolygonF([
+                    QPointF(cx_clamped, cy_clamped - size),
+                    QPointF(cx_clamped + size, cy_clamped),
+                    QPointF(cx_clamped, cy_clamped + size),
+                    QPointF(cx_clamped - size, cy_clamped),
+                ])
+                painter.drawPolygon(diamond)
+
+        mm_per_px = get_settings().preprocess.roi_calibration_mm_per_px or 1.0
+        area_mm2 = (detection.area_px or 0.0) * (mm_per_px ** 2)
+        prefix = "PICK " if is_pick else ""
+        label = f"{prefix}{detection.class_name} {detection.confidence:.0%}"
+        coord_label = f"({cx_f * mm_per_px:.0f}, {cy_f * mm_per_px:.0f}) mm"
         extra_parts: List[str] = []
-        if best_detection.angle_deg is not None:
-            extra_parts.append(f"{best_detection.angle_deg:.1f}°")
-        if best_detection.area_px is not None:
-            extra_parts.append(f"A={best_detection.area_px:.0f}px²")
+        if detection.angle_deg is not None:
+            extra_parts.append(f"{detection.angle_deg:.1f}°")
+        if area_mm2 > 0:
+            extra_parts.append(f"A={area_mm2:.0f}mm²")
         extra_label = " | ".join(extra_parts)
 
         font = QFont("Segoe UI", 10, QFont.Bold)
@@ -290,7 +313,7 @@ class VideoWidget(QWidget):
         painter.setPen(QPen(Qt.black))
         painter.drawText(label_rect, Qt.AlignCenter, label)
 
-        coord_rect = QRect(cx - 50, y2 + 5, 100, 18)
+        coord_rect = QRect(cx - 60, y2 + 5, 120, 18)
         painter.fillRect(coord_rect, QColor(0, 0, 0, 180))
         painter.setPen(QPen(Qt.white))
         painter.drawText(coord_rect, Qt.AlignCenter, coord_label)
@@ -300,20 +323,6 @@ class VideoWidget(QWidget):
             painter.fillRect(extra_rect, QColor(0, 0, 0, 180))
             painter.setPen(QPen(QColor(255, 255, 0)))
             painter.drawText(extra_rect, Qt.AlignCenter, extra_label)
-
-    @staticmethod
-    def _select_best(detections: List[Detection]) -> Detection:
-        """Seleciona a melhor detecção combinando confiança e área (normalizada)."""
-        if len(detections) == 1:
-            return detections[0]
-        try:
-            max_area = max(d.effective_area_px for d in detections) or 1.0
-        except Exception:
-            return max(detections, key=lambda d: d.confidence)
-        return max(
-            detections,
-            key=lambda d: d.confidence + (d.effective_area_px / max_area) * 0.5,
-        )
 
     def _draw_mask_contour(
         self,

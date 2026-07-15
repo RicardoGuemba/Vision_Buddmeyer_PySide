@@ -70,7 +70,19 @@ class DetectionSettings(BaseModel):
     )
     prioritize_area: bool = Field(
         default=True,
-        description="Usa confiança+área para eleger a melhor detecção (pick-and-place)",
+        description="Legado: confiança+área ponderada (preferir best_for_plc no MVP)",
+    )
+    display_confidence_threshold: float = Field(
+        default=0.8,
+        ge=0.0,
+        le=1.0,
+        description="Confiança mínima para exibir detecção na UI/MJPEG",
+    )
+    plc_confidence_threshold: float = Field(
+        default=0.8,
+        ge=0.0,
+        le=1.0,
+        description="Confiança mínima para candidato ao envio CLP",
     )
     
     @field_validator("device")
@@ -130,6 +142,10 @@ class CIPSettings(BaseModel):
 class RobotControlSettings(BaseModel):
     """Configurações da máquina de estados do controle robô/CLP."""
     
+    enabled: bool = Field(
+        default=False,
+        description="FSM pick/place completo; False = MVP visão + envio direto ao CLP",
+    )
     ack_timeout: float = Field(default=5.0, ge=1.0, description="Timeout para ACK do robô (s)")
     pick_timeout: float = Field(default=30.0, ge=5.0, description="Timeout para pick (s)")
     place_timeout: float = Field(default=30.0, ge=5.0, description="Timeout para place (s)")

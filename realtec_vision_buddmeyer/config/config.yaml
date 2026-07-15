@@ -31,6 +31,8 @@ detection:
   segmentation_overlap_mask_area_threshold: 0.8
   segmentation_min_mask_pixels: 64
   prioritize_area: true
+  display_confidence_threshold: 0.8
+  plc_confidence_threshold: 0.8
 preprocess:
   profile: bright
   brightness: 0.0
@@ -54,6 +56,7 @@ cip:
   heartbeat_interval: 1.0
   auto_reconnect: true
 robot_control:
+  enabled: false
   ack_timeout: 5.0
   pick_timeout: 30.0
   place_timeout: 30.0

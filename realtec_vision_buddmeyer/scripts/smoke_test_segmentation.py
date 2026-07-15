@@ -292,7 +292,9 @@ def run(args) -> int:
 
             if result.has_detections:
                 ok_frames += 1
-                best = result.best_by_priority()
+                best = result.best_for_plc(threshold=args.confidence)
+                if best is None:
+                    best = result.best_by_priority()
                 assert 0.0 <= (best.angle_deg or 0.0) < 180.0
                 assert (best.area_px or 0.0) > 0
                 cx, cy = best.centroid

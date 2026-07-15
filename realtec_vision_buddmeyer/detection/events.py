@@ -212,6 +212,26 @@ class DetectionResult:
     def filter_by_confidence(self, threshold: float) -> List[Detection]:
         return [d for d in self.detections if d.confidence >= threshold]
 
+    def visible_detections(self, threshold: float) -> List[Detection]:
+        """Detecções com confiança >= threshold (exibição UI/MJPEG)."""
+        return self.filter_by_confidence(threshold)
+
+    def best_for_plc(self, threshold: float = 0.8) -> Optional[Detection]:
+        """
+        Escolhe o alvo de pick entre candidatos com conf >= threshold.
+
+        Critério lexicográfico (paralaxe no container):
+          1. Maior área aparente (px²) — objeto mais próximo da câmara projeta maior
+          2. Maior confiança — desempate
+        """
+        candidates = self.visible_detections(threshold)
+        if not candidates:
+            return None
+        return max(
+            candidates,
+            key=lambda d: (d.effective_area_px, d.confidence),
+        )
+
     def filter_by_class(self, class_names: List[str]) -> List[Detection]:
         return [d for d in self.detections if d.class_name in class_names]
 
@@ -252,16 +272,17 @@ class DetectionEvent:
         cls,
         result: DetectionResult,
         source_id: str = "main",
+        plc_threshold: float = 0.8,
         prioritize_area: bool = True,
     ) -> "DetectionEvent":
         """
         Cria evento a partir de DetectionResult.
 
-        prioritize_area=True: usa `best_by_priority` (confiança + área).
-        Útil para priorizar embalagens grandes no pick-and-place.
+        Usa `best_for_plc` (área aparente + confiança) para o alvo enviado ao CLP.
+        prioritize_area=False: fallback histórico por maior confiança apenas.
         """
         if prioritize_area:
-            best = result.best_by_priority()
+            best = result.best_for_plc(threshold=plc_threshold)
         else:
             best = result.best_detection
 
@@ -272,6 +293,7 @@ class DetectionEvent:
                 frame_id=result.frame_id,
                 timestamp=result.timestamp,
                 inference_time_ms=result.inference_time_ms,
+                detection_count=result.count,
             )
 
         return cls(
@@ -286,7 +308,7 @@ class DetectionEvent:
             frame_id=result.frame_id,
             timestamp=result.timestamp,
             inference_time_ms=result.inference_time_ms,
-            detection_count=result.count,
+            detection_count=len(result.visible_detections(plc_threshold)),
         )
 
     def to_plc_data(self) -> Dict[str, Any]:

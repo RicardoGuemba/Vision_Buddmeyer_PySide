@@ -856,7 +856,11 @@ class InferenceEngine(QObject):
             self._metrics.record("detection_confidence", best.confidence * 100)
         
         # Cria evento
-        event = DetectionEvent.from_result(result)
+        event = DetectionEvent.from_result(
+            result,
+            plc_threshold=self._settings.detection.plc_confidence_threshold,
+            prioritize_area=self._settings.detection.prioritize_area,
+        )
         
         # Emite sinais
         self.detection_result.emit(result)

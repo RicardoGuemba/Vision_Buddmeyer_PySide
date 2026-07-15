@@ -20,13 +20,12 @@ from PySide6.QtGui import QFont, QKeySequence, QShortcut
 
 from config import get_settings
 from core.logger import get_logger
-from preprocessing.roi_manager import clamp_centroid_to_roi
 from core.metrics import MetricsCollector
 from streaming import StreamManager
 from streaming.mjpeg_server import MjpegServer
 from detection import InferenceEngine
 from communication import CIPClient
-from control import RobotController
+from control import RobotController, VisionSupervisor
 
 from ui.widgets.video_widget import VideoWidget
 from ui.widgets.status_panel import StatusPanel
@@ -55,15 +54,13 @@ class OperationPage(QWidget):
         self._stream_manager = StreamManager()
         self._inference_engine = InferenceEngine()
         self._cip_client = CIPClient()
-        self._robot_controller = RobotController()
+        self._robot_fsm_enabled = bool(self._settings.robot_control.enabled)
+        self._robot_controller = RobotController() if self._robot_fsm_enabled else None
+        self._vision_supervisor = VisionSupervisor(self._cip_client, self._settings)
         
         self._is_running = False
         self._mjpeg_server: Optional[MjpegServer] = None
         
-        # Contador de frames para comunicação periódica com CLP
-        self._frame_count = 0
-        self._communication_interval = 25  # Comunicar a cada 25 frames
-        self._last_best_detection = None  # Armazena última melhor detecção
         self._detection_count = 0  # Contador total de detecções
         self._error_count = 0  # Contador total de erros
         
@@ -73,9 +70,19 @@ class OperationPage(QWidget):
         self._pending_start_source_label: Optional[str] = None
         
         self._setup_ui()
+        self._apply_mvp_ui_visibility()
         self._sync_combo_to_settings()
         self._connect_signals()
         self._setup_shortcuts()
+    
+    def _apply_mvp_ui_visibility(self) -> None:
+        """Esconde controlos FSM quando robot_control.enabled=false."""
+        fsm_visible = self._robot_fsm_enabled
+        self._authorize_send_btn.setVisible(fsm_visible)
+        self._continuous_cb.setVisible(fsm_visible)
+        self._new_cycle_btn.setVisible(fsm_visible)
+        if not fsm_visible:
+            self._status_step_label.setText("MVP: detecção + envio direto ao CLP")
     
     def _setup_ui(self) -> None:
         """Configura a interface."""
@@ -363,8 +370,17 @@ class OperationPage(QWidget):
 
     def _refresh_centroid_display(self) -> None:
         """Atualiza exibição do centroide no painel (usa calibração atual)."""
-        if self._last_best_detection is not None:
-            self._status_panel.update_detection(self._last_best_detection)
+        from detection.events import DetectionEvent
+
+        result = self._inference_engine.last_result
+        if result is None:
+            return
+        event = DetectionEvent.from_result(
+            result,
+            plc_threshold=self._settings.detection.plc_confidence_threshold,
+        )
+        if event.detected:
+            self._status_panel.update_detection(event)
     
     def _on_roi_changed(self) -> None:
         """Atualiza settings quando ROI muda (persistência via Salvar Config)."""
@@ -412,19 +428,26 @@ class OperationPage(QWidget):
         
         # Inferência
         self._inference_engine.detection_result.connect(self._video_widget.update_detections)
+        self._inference_engine.detection_result.connect(self._on_detection_result)
         self._inference_engine.detection_event.connect(self._on_detection)
         
         # CIP
         self._cip_client.state_changed.connect(self._status_panel.set_connection_state)
         self._cip_client.connection_error.connect(self._on_cip_error)
         
-        # Robô
-        self._robot_controller.state_changed.connect(self._status_panel.set_robot_state)
-        self._robot_controller.state_changed.connect(self._on_robot_state_changed)
-        self._robot_controller.cycle_completed.connect(self._on_cycle_completed)
-        self._robot_controller.error_occurred.connect(self._on_robot_error)
-        self._robot_controller.cycle_step.connect(self._on_cycle_step)
-        self._robot_controller.cycle_summary.connect(self._on_cycle_summary)
+        # Supervisor MVP (envio único ao CLP)
+        self._vision_supervisor.set_roi_getter(self._status_panel.get_roi)
+        self._vision_supervisor.pick_sent.connect(self._on_supervisor_pick_sent)
+        self._vision_supervisor.pick_skipped.connect(self._on_supervisor_pick_skipped)
+        
+        # Robô (FSM completo — opcional)
+        if self._robot_controller is not None:
+            self._robot_controller.state_changed.connect(self._status_panel.set_robot_state)
+            self._robot_controller.state_changed.connect(self._on_robot_state_changed)
+            self._robot_controller.cycle_completed.connect(self._on_cycle_completed)
+            self._robot_controller.error_occurred.connect(self._on_robot_error)
+            self._robot_controller.cycle_step.connect(self._on_cycle_step)
+            self._robot_controller.cycle_summary.connect(self._on_cycle_summary)
         
         # ROI (persiste em settings; Salvar Config na aba Configuração persiste no arquivo)
         self._status_panel.roi_changed.connect(self._on_roi_changed)
@@ -605,7 +628,8 @@ class OperationPage(QWidget):
             return
         self._event_console.add_info("Inferência iniciada - detecção ativa")
         cycle_mode = "continuous" if self._continuous_cb.isChecked() else "manual"
-        self._robot_controller.set_cycle_mode(cycle_mode)
+        if self._robot_controller is not None:
+            self._robot_controller.set_cycle_mode(cycle_mode)
         asyncio.create_task(self._connect_plc_and_start_robot())
         self._is_running = True
 
@@ -709,7 +733,8 @@ class OperationPage(QWidget):
         if self._is_running:
             self._stop_system()
         else:
-            self._robot_controller.stop()
+            if self._robot_controller is not None:
+                self._robot_controller.stop()
         self._cip_client.shutdown_for_exit()
 
     async def _connect_plc_and_start_robot(self) -> None:
@@ -739,12 +764,17 @@ class OperationPage(QWidget):
             except Exception as e:
                 self._logger.warning("failed_to_set_vision_ready", error=str(e))
             
-            # Inicia controlador de robo (funciona em real e simulado)
-            self._robot_controller.start()
-            mode_label = "continuo" if self._continuous_cb.isChecked() else "manual"
-            self._event_console.add_info(
-                f"Controlador de robo iniciado (modo {mode_label})"
-            )
+            # Inicia controlador de robo (FSM completo — opcional)
+            if self._robot_controller is not None:
+                self._robot_controller.start()
+                mode_label = "continuo" if self._continuous_cb.isChecked() else "manual"
+                self._event_console.add_info(
+                    f"Controlador de robo iniciado (modo {mode_label})"
+                )
+            else:
+                self._event_console.add_info(
+                    "Supervisor MVP: envio direto de coordenadas ao CLP"
+                )
                 
         except Exception as e:
             self._event_console.add_warning(
@@ -755,7 +785,8 @@ class OperationPage(QWidget):
             # Garante conexão simulada
             if not self._cip_client.is_connected:
                 await self._cip_client._connect_simulated()
-            self._robot_controller.start()
+            if self._robot_controller is not None:
+                self._robot_controller.start()
     
     async def _connect_plc(self) -> None:
         """Conecta ao CLP."""
@@ -765,80 +796,6 @@ class OperationPage(QWidget):
         except Exception as e:
             self._event_console.add_warning(f"CLP em modo simulado: {e}")
     
-    def _communicate_centroid_to_plc(self) -> None:
-        """
-        Comunica as coordenadas do centroide ao CLP.
-        
-        Chamado a cada 25 frames.
-        Usa as TAGs definidas: CENTROID_X, CENTROID_Y, CONFIDENCE, etc.
-        Inclui handshake básico: só envia se CLP conectado e visão OK.
-        """
-        if self._last_best_detection is None:
-            return
-        
-        # Handshake básico: verifica estado do CLP
-        if not self._cip_client._state.is_connected:
-            self._logger.debug("skipping_centroid_plc_not_connected")
-            return
-        
-        # Verifica se está em modo saudável (não degradado)
-        if self._cip_client._state.status.value == "degraded":
-            self._logger.debug("skipping_centroid_plc_degraded")
-            return
-        
-        detection = self._last_best_detection
-        centroid_x_px = detection.centroid[0]
-        centroid_y_px = detection.centroid[1]
-        confidence = detection.confidence
-
-        # Clamp ao ROI quando exibido (evita colisão da plataforma com container)
-        roi_enabled, roi_coords = self._status_panel.get_roi()
-        if roi_enabled and roi_coords and len(roi_coords) == 4:
-            centroid_x_px, centroid_y_px = clamp_centroid_to_roi(
-                centroid_x_px, centroid_y_px, tuple(roi_coords)
-            )
-
-        # Aplica mm/px ao centroide: coord_mm = coord_px * mm_per_px
-        mm_per_px = getattr(
-            self._settings.preprocess, "roi_calibration_mm_per_px", 1.0
-        ) or 1.0
-        centroid_x = centroid_x_px * mm_per_px
-        centroid_y = centroid_y_px * mm_per_px
-
-        # Ângulo e área (vindos do pipeline de segmentação)
-        angle_deg = float(getattr(detection, "angle_deg", None) or 0.0)
-        area_px = float(getattr(detection, "area_px", None) or 0.0)
-        area_scaled = area_px * (mm_per_px ** 2)
-
-        # Log da comunicação
-        self._logger.info(
-            "communicating_centroid_to_plc",
-            frame=self._frame_count,
-            centroid_x=centroid_x,
-            centroid_y=centroid_y,
-            angle_deg=angle_deg,
-            area=area_scaled,
-            confidence=confidence,
-            plc_status=self._cip_client._state.status.value,
-        )
-
-        self._event_console.add_info(
-            f"[Frame {self._frame_count}] Enviando centroide: "
-            f"({centroid_x:.1f}, {centroid_y:.1f}) ang={angle_deg:.1f}° "
-            f"area={area_scaled:.0f} Conf: {confidence:.0%}",
-            "CLP",
-        )
-
-        asyncio.create_task(self._send_detection_to_plc(
-            centroid_x=centroid_x,
-            centroid_y=centroid_y,
-            confidence=confidence,
-            detection_count=detection.detection_count,
-            processing_time=detection.inference_time_ms,
-            angle_deg=angle_deg,
-            area=area_scaled,
-        ))
-
     async def _send_detection_to_plc(
         self,
         centroid_x: float,
@@ -923,8 +880,6 @@ class OperationPage(QWidget):
             return
 
         self._is_running = False
-        self._frame_count = 0
-        self._last_best_detection = None
 
         self._event_console.add_info("Parando sistema...")
 
@@ -935,7 +890,8 @@ class OperationPage(QWidget):
                 self._logger.warning("mjpeg_stop_error", error=str(e))
             self._mjpeg_server = None
 
-        self._robot_controller.stop()
+        if self._robot_controller is not None:
+            self._robot_controller.stop()
         self._inference_engine.stop()
         self._stream_manager.stop()
 
@@ -996,17 +952,21 @@ class OperationPage(QWidget):
         self._source_combo.setEnabled(not self._is_running)
         self._source_path_btn.setEnabled(True)  # Sempre habilitado
         
-        # Controles de ciclo
-        is_manual = not self._continuous_cb.isChecked()
-        self._new_cycle_btn.setEnabled(
-            self._is_running and is_manual
-            and self._robot_controller.state.value == "READY_FOR_NEXT"
-        )
+        # Controles de ciclo (FSM)
+        if self._robot_fsm_enabled and self._robot_controller is not None:
+            is_manual = not self._continuous_cb.isChecked()
+            self._new_cycle_btn.setEnabled(
+                self._is_running and is_manual
+                and self._robot_controller.state.value == "READY_FOR_NEXT"
+            )
         
         if not self._is_running:
-            self._status_step_label.setText("—")
-            self._authorize_send_btn.setVisible(False)
-            self._authorize_send_btn.setEnabled(False)
+            if self._robot_fsm_enabled:
+                self._status_step_label.setText("—")
+                self._authorize_send_btn.setVisible(False)
+                self._authorize_send_btn.setEnabled(False)
+            else:
+                self._status_step_label.setText("MVP: detecção + envio direto ao CLP")
         
         self._status_panel.set_stream_running(self._is_running)
         self._status_panel.set_inference_running(self._is_running)
@@ -1228,86 +1188,79 @@ class OperationPage(QWidget):
         return out
 
     def _draw_detections_on_frame(self, frame, result) -> np.ndarray:
-        """Desenha a melhor detecção no frame (BGR) para o stream MJPEG.
-
-        Quando há máscara (segmentação), desenha contorno + centróide geométrico
-        + vetor do eixo maior; caso contrário, desenha bbox + centro do bbox.
-        """
+        """Desenha detecções visíveis (>= display threshold) no frame MJPEG."""
         import cv2
         import math
 
         if result is None or not result.has_detections:
             return frame
-        # Prioriza confiança+área quando possível
-        try:
-            best = result.best_by_priority()
-        except AttributeError:
-            best = result.best_detection
-        if best is None:
+
+        settings = self._settings
+        display_threshold = settings.detection.display_confidence_threshold
+        plc_threshold = settings.detection.plc_confidence_threshold
+        mm_per_px = settings.preprocess.roi_calibration_mm_per_px or 1.0
+        visible = result.visible_detections(display_threshold)
+        pick_target = result.best_for_plc(plc_threshold)
+        if not visible:
             return frame
+
         out = frame.copy()
-        bbox = best.bbox
-        x1, y1 = int(bbox.x1), int(bbox.y1)
-        x2, y2 = int(bbox.x2), int(bbox.y2)
 
-        if best.confidence >= 0.8:
-            color = (0, 255, 0)
-        elif best.confidence >= 0.5:
-            color = (0, 255, 255)
-        else:
-            color = (0, 165, 255)
-
-        if best.has_mask and best.mask is not None:
-            try:
-                bin_mask = best.mask.astype(np.uint8)
-                contours, _ = cv2.findContours(
-                    bin_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE,
-                )
-                overlay = out.copy()
-                cv2.drawContours(overlay, contours, -1, color, thickness=cv2.FILLED)
-                cv2.addWeighted(overlay, 0.25, out, 0.75, 0, out)
-                cv2.drawContours(out, contours, -1, color, thickness=2)
-            except Exception:
-                cv2.rectangle(out, (x1, y1), (x2, y2), color, 3)
-        else:
-            cv2.rectangle(out, (x1, y1), (x2, y2), color, 3)
-
-        cx_f, cy_f = best.centroid
-        cx, cy = int(cx_f), int(cy_f)
-        cv2.circle(out, (cx, cy), 10, color, 2)
-        cv2.circle(out, (cx, cy), 10, (255, 255, 255), 1)
-
-        if best.has_orientation:
-            angle = float(best.angle_deg or 0.0)
-            if best.major_axis_length is not None and best.major_axis_length > 0:
-                half = 0.5 * float(best.major_axis_length)
-            else:
-                half = 0.5 * max(bbox.width, bbox.height)
-            dx = math.cos(math.radians(angle)) * half
-            dy = math.sin(math.radians(angle)) * half
-            p1 = (int(cx_f - dx), int(cy_f - dy))
-            p2 = (int(cx_f + dx), int(cy_f + dy))
-            cv2.line(out, p1, p2, (255, 0, 255), 3)
-            cv2.circle(out, p2, 6, (255, 0, 255), -1)
-
-        label = f"{best.class_name} {best.confidence:.0%}"
-        cv2.putText(out, label, (x1, max(12, y1 - 8)), cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2)
-
-        extras: List[str] = []
-        if best.angle_deg is not None:
-            extras.append(f"{best.angle_deg:.1f} deg")
-        if best.area_px is not None:
-            extras.append(f"A={best.area_px:.0f}px2")
-        if extras:
-            cv2.putText(
-                out,
-                " | ".join(extras),
-                (x1, y2 + 18),
-                cv2.FONT_HERSHEY_SIMPLEX,
-                0.55,
-                (0, 255, 255),
-                2,
+        def _draw_one(det, is_pick: bool) -> None:
+            bbox = det.bbox
+            x1, y1 = int(bbox.x1), int(bbox.y1)
+            x2, y2 = int(bbox.x2), int(bbox.y2)
+            color = (0, 255, 0) if is_pick else (
+                (0, 255, 0) if det.confidence >= 0.8 else (0, 255, 255)
             )
+            thickness = 3 if is_pick else 2
+
+            if det.has_mask and det.mask is not None:
+                try:
+                    bin_mask = det.mask.astype(np.uint8)
+                    contours, _ = cv2.findContours(
+                        bin_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE,
+                    )
+                    overlay = out.copy()
+                    cv2.drawContours(overlay, contours, -1, color, thickness=cv2.FILLED)
+                    cv2.addWeighted(overlay, 0.25, out, 0.75, 0, out)
+                    cv2.drawContours(out, contours, -1, color, thickness=thickness)
+                except Exception:
+                    cv2.rectangle(out, (x1, y1), (x2, y2), color, thickness)
+            else:
+                cv2.rectangle(out, (x1, y1), (x2, y2), color, thickness)
+
+            cx_f, cy_f = det.centroid
+            cx, cy = int(cx_f), int(cy_f)
+            cv2.circle(out, (cx, cy), 12 if is_pick else 10, color, 2)
+
+            if det.has_orientation:
+                angle = float(det.angle_deg or 0.0)
+                half = 0.5 * float(det.major_axis_length or max(bbox.width, bbox.height))
+                dx = math.cos(math.radians(angle)) * half
+                dy = math.sin(math.radians(angle)) * half
+                p1 = (int(cx_f - dx), int(cy_f - dy))
+                p2 = (int(cx_f + dx), int(cy_f + dy))
+                cv2.line(out, p1, p2, (255, 0, 255), 3)
+
+            prefix = "PICK " if is_pick else ""
+            label = f"{prefix}{det.class_name} {det.confidence:.0%}"
+            cv2.putText(out, label, (x1, max(12, y1 - 8)), cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2)
+            area_mm2 = (det.area_px or 0.0) * (mm_per_px ** 2)
+            if area_mm2 > 0:
+                cv2.putText(
+                    out,
+                    f"A={area_mm2:.0f}mm2",
+                    (x1, y2 + 18),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    0.55,
+                    (0, 255, 255),
+                    2,
+                )
+
+        for det in visible:
+            _draw_one(det, det is pick_target)
+
         return out
 
     @Slot(object)
@@ -1326,29 +1279,53 @@ class OperationPage(QWidget):
 
         if self._is_running and self._inference_engine.is_running:
             self._inference_engine.process_frame(frame, frame_info.frame_id)
+    
+    @Slot(object)
+    def _on_detection_result(self, result) -> None:
+        """Handler MVP: envia alvo de pick ao CLP via VisionSupervisor."""
+        if not self._is_running or self._robot_fsm_enabled:
+            return
+        self._vision_supervisor.handle_detection_result(result)
 
-            self._frame_count += 1
-            if self._frame_count % self._communication_interval == 0:
-                self._communicate_centroid_to_plc()
+    @Slot(object)
+    def _on_supervisor_pick_sent(self, event) -> None:
+        """Confirma envio ao CLP no modo MVP."""
+        if not event.detected:
+            return
+        mm_per_px = self._settings.preprocess.roi_calibration_mm_per_px or 1.0
+        cx_mm = event.centroid[0] * mm_per_px
+        cy_mm = event.centroid[1] * mm_per_px
+        area_mm2 = (event.area_px or 0.0) * (mm_per_px ** 2)
+        self._event_console.add_info(
+            f"CLP: PICK ({cx_mm:.1f}, {cy_mm:.1f}) mm "
+            f"ang={float(event.angle_deg or 0):.1f}° A={area_mm2:.0f}mm² "
+            f"Conf={event.confidence:.0%}",
+            "CLP",
+        )
+        self._status_panel.update_detection(event)
+
+    @Slot(str)
+    def _on_supervisor_pick_skipped(self, reason: str) -> None:
+        self._logger.debug("supervisor_pick_skipped", reason=reason)
     
     @Slot(object)
     def _on_detection(self, event) -> None:
-        """Handler para detecção."""
+        """Handler para detecção (FSM completo quando habilitado)."""
         if not self._is_running:
             return
-        if event.detected:
-            # Armazena a melhor detecção para comunicação periódica
-            self._last_best_detection = event
-            self._detection_count += 1
-            
+        if not event.detected:
+            return
+        self._detection_count += 1
+        if self._robot_fsm_enabled:
             self._event_console.add_success(
                 f"Detectado: {event.class_name} ({event.confidence:.0%})",
-                "Detecção"
+                "Detecção",
             )
             self._status_panel.update_detection(event)
-            
-            # Processa no controlador de robô
-            self._robot_controller.process_detection(event)
+            if self._robot_controller is not None:
+                self._robot_controller.process_detection(event)
+        elif event.detected:
+            self._status_panel.update_detection(event)
     
     @Slot(int)
     def _on_cycle_completed(self, cycle_number: int) -> None:
@@ -1357,6 +1334,8 @@ class OperationPage(QWidget):
     
     def _on_cycle_mode_changed(self, state: int) -> None:
         """Handler para mudança de modo de ciclo (manual/contínuo)."""
+        if self._robot_controller is None:
+            return
         mode = "continuous" if self._continuous_cb.isChecked() else "manual"
         self._robot_controller.set_cycle_mode(mode)
         self._new_cycle_btn.setEnabled(not self._continuous_cb.isChecked() and self._is_running)
@@ -1365,6 +1344,8 @@ class OperationPage(QWidget):
     
     def _authorize_new_cycle(self) -> None:
         """Autoriza o próximo ciclo de pick-and-place (modo manual)."""
+        if self._robot_controller is None:
+            return
         self._robot_controller.authorize_next_cycle()
         self._new_cycle_btn.setEnabled(False)
         self._event_console.add_info("Novo ciclo autorizado pelo operador")
@@ -1379,6 +1360,8 @@ class OperationPage(QWidget):
     
     def _authorize_send_to_plc(self) -> None:
         """Autoriza envio das coordenadas ao CLP apos deteccao (modo manual)."""
+        if self._robot_controller is None:
+            return
         self._robot_controller.authorize_send_to_plc()
         self._authorize_send_btn.setEnabled(False)
         self._event_console.add_info("Envio ao CLP autorizado pelo operador")
@@ -1408,6 +1391,8 @@ class OperationPage(QWidget):
     @Slot(str)
     def _on_robot_state_changed(self, state_value: str) -> None:
         """Handler para mudanca de estado do robo: botoes e barra de status."""
+        if self._robot_controller is None:
+            return
         from control.robot_controller import RobotControlState
         
         # Barra de status
@@ -1446,7 +1431,7 @@ class OperationPage(QWidget):
     @Slot(list)
     def _on_cycle_summary(self, steps: list) -> None:
         """Handler para resumo do ciclo completo — exibe sumário formatado."""
-        if not self._is_running or not steps:
+        if not self._is_running or not steps or self._robot_controller is None:
             return
         
         cycle_num = self._robot_controller.cycle_count
