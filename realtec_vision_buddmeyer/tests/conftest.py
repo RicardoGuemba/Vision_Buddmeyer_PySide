@@ -32,10 +32,6 @@ detection:
   default_model: PekingU/rtdetr_r50vd
   confidence_threshold: 0.5
   device: auto
-cip:
-  ip: 192.168.1.10
-  port: 44818
-  simulated: true
 output:
   rtsp_enabled: false
   http_port: 8080

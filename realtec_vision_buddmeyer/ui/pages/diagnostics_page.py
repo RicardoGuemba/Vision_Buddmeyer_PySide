@@ -26,8 +26,7 @@ from config import get_settings
 from core.metrics import MetricsCollector
 from streaming import StreamManager
 from detection import InferenceEngine
-from communication import CIPClient
-from control import RobotController
+from robot import Mark2Controller
 
 from ui.widgets.metrics_chart import MetricsChart
 from ui.widgets.log_viewer import LogViewer
@@ -98,11 +97,15 @@ class DiagnosticsPage(QWidget):
         self._metrics = MetricsCollector()
         self._stream_manager = StreamManager()
         self._inference_engine = InferenceEngine()
-        self._cip_client = CIPClient()
-        self._robot_controller = RobotController()
+        self._mark2 = Mark2Controller()
+        self._cycle_count = 0
         
         self._setup_ui()
         self._setup_timer()
+        self._mark2.cycle_completed.connect(self._on_cycle_completed)
+
+    def _on_cycle_completed(self) -> None:
+        self._cycle_count += 1
     
     def _setup_ui(self) -> None:
         """Configura a interface."""
@@ -161,9 +164,9 @@ class DiagnosticsPage(QWidget):
         self._detection_card = StatusCard("Detecções")
         cards_layout.addWidget(self._detection_card, 0, 2)
         
-        # CLP
-        self._plc_card = StatusCard("Status CLP")
-        cards_layout.addWidget(self._plc_card, 1, 0)
+        # Mark2
+        self._mark2_card = StatusCard("Status Mark2")
+        cards_layout.addWidget(self._mark2_card, 1, 0)
         
         # Ciclos
         self._cycles_card = StatusCard("Ciclos")
@@ -230,12 +233,12 @@ class DiagnosticsPage(QWidget):
         self._confidence_chart.set_color(QColor(40, 167, 69))
         charts_layout.addWidget(self._confidence_chart, 1, 0)
         
-        # Tempo de Resposta CIP
-        self._cip_time_chart = MetricsChart(
-            "cip_response_time", "Tempo de Resposta CLP", "ms"
+        # Tempo de ciclo Mark2 (placeholder métrica serial)
+        self._mark2_time_chart = MetricsChart(
+            "mark2_move_time", "Tempo de movimento Mark2", "ms"
         )
-        self._cip_time_chart.set_color(QColor(220, 53, 69))
-        charts_layout.addWidget(self._cip_time_chart, 1, 1)
+        self._mark2_time_chart.set_color(QColor(220, 53, 69))
+        charts_layout.addWidget(self._mark2_time_chart, 1, 1)
         
         layout.addLayout(charts_layout)
         
@@ -364,14 +367,13 @@ class DiagnosticsPage(QWidget):
         det_count = self._metrics.get_counter("detection_count")
         self._detection_card.set_value(str(det_count))
         
-        # CLP
-        plc_status = self._cip_client.state.status.value
-        color = "#28a745" if self._cip_client.is_connected else "#dc3545"
-        self._plc_card.set_value(plc_status.upper(), color)
+        # Mark2
+        connected = self._mark2.worker.serial.is_connected
+        color = "#28a745" if connected else "#dc3545"
+        self._mark2_card.set_value(self._mark2.state.value, color)
         
         # Ciclos
-        cycle_count = self._robot_controller.cycle_count
-        self._cycles_card.set_value(str(cycle_count), "#28a745")
+        self._cycles_card.set_value(str(self._cycle_count), "#28a745")
         
         # Erros
         error_count = self._metrics.get_counter("error_count")

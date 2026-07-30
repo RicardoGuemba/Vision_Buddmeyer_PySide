@@ -38,18 +38,12 @@ class TestShutdownStability:
 
     def test_handlers_ignore_when_not_running(self, qtbot):
         """Handlers retornam cedo quando _is_running é False."""
-        from datetime import datetime
-
         from detection.events import DetectionEvent
         from ui.pages.operation_page import OperationPage
 
         page = OperationPage()
         qtbot.addWidget(page)
         page._is_running = False
-
-        page._on_cycle_summary([])
-        page._on_cycle_summary([{"step": "x", "timestamp": datetime.now()}])
-        page._on_cycle_step("test")
 
         evt = DetectionEvent(
             detected=True,
@@ -88,16 +82,14 @@ class TestShutdownStability:
         assert not page._model_loading
         assert page._pending_start_source_label is None
 
-    def test_shutdown_stops_cip_timers(self, qtbot):
-        """shutdown() chama shutdown_for_exit no cliente CIP."""
+    def test_shutdown_stops_mark2_worker(self, qtbot):
+        """shutdown() para o Mark2 sem erro."""
         from ui.pages.operation_page import OperationPage
 
         page = OperationPage()
         qtbot.addWidget(page)
-        page._cip_client._start_heartbeat()
-        assert page._cip_client._heartbeat_timer is not None
         page.shutdown()
-        assert page._cip_client._heartbeat_timer is None
+        assert not page._is_running
 
     def test_main_window_begin_exit_idempotent(self, qtbot):
         """_begin_exit pode ser chamado uma vez sem erro."""

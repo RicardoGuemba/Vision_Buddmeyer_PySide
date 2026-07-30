@@ -1,14 +1,15 @@
-# Buddmeyer Vision System v2.0
+# Buddmeyer Vision System v2.0 — Mark2
 
-Sistema de visão computacional industrial para automação de expedição (pick-and-place) de embalagens.
+Sistema de visão computacional para pick-and-place de embalagens Buddmeyer com braço MakerQuest Mark2 (Arduino Uno + Sensor Shield V5).
 
 ## Características
 
-- **Segmentação em tempo real** com Mask2Former (`model_best/`) — centróide, ângulo e área por embalagem
-- **Comunicação industrial** com CLP Omron NX102 via CIP/EtherNet-IP
-- **Interface desktop PySide6** — abas Operação, Configuração, Diagnósticos
-- **Múltiplas fontes de vídeo:** arquivo MP4, USB, GigE, GenTL (RTSP via YAML)
-- **Logs estruturados** e modo simulado para desenvolvimento sem CLP
+- **Segmentação em tempo real** com Mask2Former (`model_best/`)
+- **Actuação Mark2** via USB serial (`MOVE` / `HOME` / `STOP`)
+- **Calibração** pixel ↔ mundo ↔ robô (homografia) na aba dedicada
+- **UI PySide6:** Operação, Configuração, Calibração Mark2, Diagnósticos
+- **Fontes de vídeo:** MP4, USB, GigE, GenTL
+- **Smoke test:** detecção → acionar motor (sem pose)
 
 ## Requisitos
 
@@ -16,93 +17,48 @@ Sistema de visão computacional industrial para automação de expedição (pick
 |-----------|-------|
 | SO | macOS 12+, Ubuntu 22.04+, Windows 10/11 |
 | Python | 3.10+ |
-| RAM | 8 GB mínimo (16 GB recomendado) |
+| Hardware | Arduino Uno, Shield V5, 4 servos, fonte 5 V ≥2 A |
 | Git LFS | Obrigatório para pesos do modelo (~181 MB) |
 
 ## Instalação rápida
 
 ```bash
-git clone https://github.com/RicardoGuemba/Realtec_Vision_Buddmeyer.git
-cd Realtec_Vision_Buddmeyer
-git lfs install && git lfs pull
-
-python3 -m venv venv
-source venv/bin/activate   # Windows: venv\Scripts\activate
-pip install -r realtec_vision_buddmeyer/requirements.txt
-```
-
-## Execução
-
-```bash
 cd realtec_vision_buddmeyer
+python3 -m venv ../venv && source ../venv/bin/activate
+pip install -r requirements.txt
 python main.py
 ```
 
-**Atalhos na raiz do repo:** `Iniciar Realtec Vision.command` (macOS) ou `./Iniciar_Realtec_Vision.sh`.
-
-## Testes
-
-```bash
-cd realtec_vision_buddmeyer
-python -m pytest tests/ -v
-```
-
-## Documentação
-
-| Documento | Descrição |
-|-----------|-----------|
-| [docs/OVERVIEW.md](docs/OVERVIEW.md) | Visão geral executiva (alto nível) |
-| [docs/REFERENCE.md](docs/REFERENCE.md) | Referência técnica (baixo nível) |
-| [docs/GUIA_OPERADOR.md](docs/GUIA_OPERADOR.md) | Tutorial das abas para operador |
-| [docs/SEGMENTATION_PIPELINE.md](docs/SEGMENTATION_PIPELINE.md) | Pipeline Mask2Former |
-| [docs/TAG_CONTRACT.md](docs/TAG_CONTRACT.md) | Contrato de tags CLP |
-| [docs/CLONE_BOX_PC.md](docs/CLONE_BOX_PC.md) | Deploy no box PC |
-| [ROTEIRO_CLIENTE.md](ROTEIRO_CLIENTE.md) | Guia do cliente (IP, logs) |
-| [docs/MACOS_SETUP.md](docs/MACOS_SETUP.md) / [docs/UBUNTU_SETUP.md](docs/UBUNTU_SETUP.md) | Instalação por SO |
+Gravar firmware: `firmware/mark2_uno/mark2_uno.ino` (Arduino IDE, 115200 baud).
 
 ## Estrutura
 
 ```
 realtec_vision_buddmeyer/
 ├── main.py
-├── config/              # settings.py + config.yaml
-├── core/                # logger, metrics, exceptions
-├── streaming/           # captura + mjpeg_server
-├── detection/           # inferência Mask2Former + geometria
-├── communication/       # CIP client
-├── control/             # robot_controller (FSM)
-├── ui/                  # PySide6
-├── model_best/          # modelo (Git LFS)
+├── config/          # config.yaml + mark2.yaml
+├── robot/           # serial, IK, calibração, FSM, worker
+├── firmware/        # sketch Arduino
+├── detection/       # Mask2Former
+├── streaming/
+├── ui/
 ├── tests/
-├── scripts/             # smoke_test, check_model
 └── docs/
+    FEATURE_mark2_integration.md
+    FEATURE_mark2_coordinate_sync.md
 ```
 
 ## Configuração
 
-Edite `config/config.yaml`. Exemplo:
+- Visão / câmera: `config/config.yaml`
+- Mark2 / serial / geometria / calibração: `config/mark2.yaml`
 
-```yaml
-streaming:
-  source_type: usb
-detection:
-  model_path: model_best
-  confidence_threshold: 0.5
-  inference_fps: 4
-cip:
-  ip: 192.168.1.10
-  port: 44818
-  simulated: false
+## Testes
+
+```bash
+python -m pytest tests/ -q
+# Serial com hardware:
+MARK2_PORT=/dev/cu.usbmodem1101 python -m scripts.smoke_test_mark2_serial
 ```
 
-## Tags CLP (resumo)
-
-**Visão → CLP:** `PRODUCT_DETECTED`, `CENTROID_X`, `CENTROID_Y`, `CENTROID_ANGLE`, `OBJECT_AREA`, `CONFIDENCE`
-
-**CLP → Visão:** `ROBOT_ACK`, `ROBOT_READY`, `RobotStatus_PickComplete`, `RobotStatus_PlaceComplete`
-
-Lista completa: [docs/TAG_CONTRACT.md](docs/TAG_CONTRACT.md).
-
-## Licença
-
-© Realtec — Sistema de Automação Industrial
+© Realtec — Buddmeyer Vision + Mark2

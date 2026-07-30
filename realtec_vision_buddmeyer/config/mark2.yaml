@@ -1,0 +1,81 @@
+serial:
+  # CH340 = Arduino (1A86:7523). NÃO usar usbmodem* da webcam (2BC5).
+  port: "/dev/cu.usbserial-3140"
+  baudrate: 115200
+  timeout_seconds: 8.0
+
+geometry:
+  link_1_mm: 0.0
+  link_2_mm: 0.0
+  shoulder_height_mm: 0.0
+
+reference:
+  origin_x_mm: 0.0
+  origin_y_mm: 0.0
+  rotation_deg: 0.0
+
+workspace:
+  min_radius_mm: 0.0
+  max_radius_mm: 250.0
+  min_z_mm: 0.0
+  max_z_mm: 200.0
+
+heights:
+  package_z_mm: 15.0
+  approach_offset_mm: 50.0
+  drop_z_mm: 15.0
+  drop_x_mm: 100.0
+  drop_y_mm: 0.0
+
+servos:
+  base:
+    zero: 90
+    direction: 1
+    minimum: 15
+    maximum: 165
+  shoulder:
+    zero: 90
+    direction: -1
+    minimum: 30
+    maximum: 150
+  elbow:
+    zero: 90
+    direction: 1
+    minimum: 20
+    maximum: 160
+  gripper:
+    open: 110
+    closed: 60
+    minimum: 50
+    maximum: 120
+
+home_angles:
+  base: 90
+  shoulder: 90
+  elbow: 90
+  gripper: 110
+
+detection:
+  minimum_confidence: 0.85
+  stable_frames: 5
+  point_tolerance_px: 4.0
+  maximum_area_variation: 0.10
+
+calibration:
+  homography: null
+  image_points: []
+  world_points_mm: []
+  validation_rmse_mm: null
+  max_rmse_mm: 3.0
+  calibrated_at: null
+  min_homography_points: 4
+  min_validation_points: 10
+
+operation:
+  mode: semi
+  enabled: true
+  smoke_detection_trigger: true
+  smoke_cooldown_seconds: 1.0
+  smoke_hold_seconds: 1.0
+  smoke_movement_tolerance_px: 18.0
+  default_move_speed: 20

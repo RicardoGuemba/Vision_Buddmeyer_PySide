@@ -31,7 +31,7 @@ class TestConfigurationPage:
         assert "Entrada" in tab_names
         assert "Detecção" in tab_names
         assert "Imagem" in tab_names
-        assert "CLP" in tab_names
+        assert "Mark2" in tab_names
         assert "Saída" in tab_names
 
     def test_has_action_buttons(self, config_page):

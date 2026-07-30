@@ -19,11 +19,11 @@ from config import get_settings
 from core.logger import get_logger, setup_logging
 from streaming import StreamManager
 from detection import InferenceEngine
-from communication import CIPClient
 
 from .pages.operation_page import OperationPage
 from .pages.configuration_page import ConfigurationPage
 from .pages.diagnostics_page import DiagnosticsPage
+from .pages.mark2_calibration_page import Mark2CalibrationPage
 
 logger = get_logger("ui.main")
 
@@ -47,7 +47,6 @@ class MainWindow(QMainWindow):
         # Singletons
         self._stream_manager = StreamManager()
         self._inference_engine = InferenceEngine()
-        self._cip_client = CIPClient()
         
         self._setup_ui()
         self._setup_menu()
@@ -79,8 +78,10 @@ class MainWindow(QMainWindow):
         self._operation_page = OperationPage()
         self._configuration_page = ConfigurationPage()
         self._diagnostics_page = DiagnosticsPage()
-        
+        self._mark2_calibration_page = Mark2CalibrationPage()
+
         self._tabs.addTab(self._operation_page, "🎯 Operação")
+        self._tabs.addTab(self._mark2_calibration_page, "📐 Calibração Mark2")
         self._tabs.addTab(self._configuration_page, "⚙️ Configuração")
         self._tabs.addTab(self._diagnostics_page, "📊 Diagnósticos")
         self._tabs.currentChanged.connect(self._on_tab_changed)
@@ -166,10 +167,10 @@ class MainWindow(QMainWindow):
         separator2.setStyleSheet("color: #3d4852;")
         self._statusbar.addWidget(separator2)
         
-        # Status CLP
-        self._plc_status = QLabel("CLP: Desconectado")
-        self._plc_status.setStyleSheet("color: #6c757d;")
-        self._statusbar.addWidget(self._plc_status)
+        # Status Mark2
+        self._mark2_status = QLabel("Mark2: Desconectado")
+        self._mark2_status.setStyleSheet("color: #6c757d;")
+        self._statusbar.addWidget(self._mark2_status)
         
         # Espaçador
         spacer = QWidget()
@@ -195,14 +196,17 @@ class MainWindow(QMainWindow):
             lambda: self._update_system_status("Parado", "#6c757d")
         )
         
-        # CLP
-        self._cip_client.connected.connect(
-            lambda: self._update_plc_status("Conectado", "#28a745")
+        # Mark2 (via página de operação)
+        mark2 = self._operation_page._mark2
+        mark2.connected_changed.connect(
+            lambda connected: self._update_mark2_status(
+                "Conectado" if connected else "Desconectado",
+                "#28a745" if connected else "#6c757d",
+            )
         )
-        self._cip_client.disconnected.connect(
-            lambda: self._update_plc_status("Desconectado", "#6c757d")
+        mark2.error_occurred.connect(
+            lambda err: self._update_mark2_status("Erro", "#dc3545")
         )
-        self._cip_client.state_changed.connect(self._on_plc_state_changed)
         
         # Pré-carregamento do modelo (página de operação)
         self._operation_page.model_preload_finished.connect(self._on_model_preload_finished)
@@ -382,23 +386,10 @@ class MainWindow(QMainWindow):
         self._system_status.setText(f"Sistema: {status}")
         self._system_status.setStyleSheet(f"color: {color};")
     
-    def _update_plc_status(self, status: str, color: str) -> None:
-        """Atualiza status do CLP."""
-        self._plc_status.setText(f"CLP: {status}")
-        self._plc_status.setStyleSheet(f"color: {color};")
-    
-    @Slot(object)
-    def _on_plc_state_changed(self, state) -> None:
-        """Handler para mudança de estado do CLP."""
-        status = state.status.value.capitalize()
-        
-        if state.is_connected:
-            if state.is_simulated:
-                self._update_plc_status("Simulado", "#17a2b8")
-            else:
-                self._update_plc_status("Conectado", "#28a745")
-        else:
-            self._update_plc_status(status, "#dc3545")
+    def _update_mark2_status(self, status: str, color: str) -> None:
+        """Atualiza status Mark2 na barra inferior."""
+        self._mark2_status.setText(f"Mark2: {status}")
+        self._mark2_status.setStyleSheet(f"color: {color};")
     
     def _save_config(self) -> None:
         """Salva configurações."""
@@ -440,7 +431,7 @@ class MainWindow(QMainWindow):
                 <li>PySide6 (Qt for Python)</li>
                 <li>PyTorch + RT-DETR</li>
                 <li>OpenCV</li>
-                <li>aphyt (CIP/EtherNet-IP)</li>
+                <li>Mark2 (Arduino serial)</li>
             </ul>
             <p><b>Plataforma:</b> macOS 12+ / Ubuntu 22.04+ / Windows 10/11</p>
             <p>© 2025 Sistema de Automação Industrial</p>
@@ -474,7 +465,7 @@ class MainWindow(QMainWindow):
         self._begin_exit()
 
     def _begin_exit(self) -> None:
-        """Shutdown unificado: timers, operação, CLP; depois encerra o processo."""
+        """Shutdown unificado: timers, operação, Mark2; depois encerra o processo."""
         if self._exit_in_progress:
             return
         self._exit_in_progress = True

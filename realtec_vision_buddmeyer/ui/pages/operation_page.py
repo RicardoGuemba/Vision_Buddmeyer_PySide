@@ -3,7 +3,6 @@
 Página de Operação - Aba principal para operação do sistema.
 """
 
-import asyncio
 import time
 from pathlib import Path
 from typing import List, Optional
@@ -20,12 +19,10 @@ from PySide6.QtGui import QFont, QKeySequence, QShortcut
 
 from config import get_settings
 from core.logger import get_logger
-from core.metrics import MetricsCollector
 from streaming import StreamManager
 from streaming.mjpeg_server import MjpegServer
 from detection import InferenceEngine
-from communication import CIPClient
-from control import RobotController, VisionSupervisor
+from robot import Mark2Controller
 
 from ui.widgets.video_widget import VideoWidget
 from ui.widgets.status_panel import StatusPanel
@@ -53,10 +50,7 @@ class OperationPage(QWidget):
         self._settings = get_settings()
         self._stream_manager = StreamManager()
         self._inference_engine = InferenceEngine()
-        self._cip_client = CIPClient()
-        self._robot_fsm_enabled = bool(self._settings.robot_control.enabled)
-        self._robot_controller = RobotController() if self._robot_fsm_enabled else None
-        self._vision_supervisor = VisionSupervisor(self._cip_client, self._settings)
+        self._mark2 = Mark2Controller()
         
         self._is_running = False
         self._mjpeg_server: Optional[MjpegServer] = None
@@ -76,13 +70,23 @@ class OperationPage(QWidget):
         self._setup_shortcuts()
     
     def _apply_mvp_ui_visibility(self) -> None:
-        """Esconde controlos FSM quando robot_control.enabled=false."""
-        fsm_visible = self._robot_fsm_enabled
-        self._authorize_send_btn.setVisible(fsm_visible)
-        self._continuous_cb.setVisible(fsm_visible)
-        self._new_cycle_btn.setVisible(fsm_visible)
-        if not fsm_visible:
-            self._status_step_label.setText("MVP: detecção + envio direto ao CLP")
+        """Mostra controlos Mark2 (sempre visíveis na operação)."""
+        for widget in (
+            self._mark2_connect_btn,
+            self._mark2_disconnect_btn,
+            self._mode_combo,
+            self._authorize_send_btn,
+            self._mark2_home_btn,
+            self._mark2_open_gripper_btn,
+            self._mark2_close_gripper_btn,
+            self._mark2_test_move_btn,
+            self._mark2_execute_pnp_btn,
+            self._mark2_stop_btn,
+            self._mark2_reset_btn,
+            self._smoke_cb,
+        ):
+            widget.setVisible(True)
+        self._status_step_label.setText("Mark2: desconectado")
     
     def _setup_ui(self) -> None:
         """Configura a interface."""
@@ -162,197 +166,234 @@ class OperationPage(QWidget):
         self._status_step_label.setWordWrap(True)
         status_bar_layout.addWidget(self._status_step_label, stretch=1)
         layout.addWidget(status_bar)
-        
-        # Barra de controles (inferior)
-        controls_frame = QFrame()
-        controls_frame.setStyleSheet("""
+
+        # Controles inferiores — duas faixas para evitar truncagem
+        controls_wrap = QVBoxLayout()
+        controls_wrap.setSpacing(6)
+
+        # --- Linha 1: fonte + ciclo de visão ---
+        vision_frame = QFrame()
+        vision_frame.setStyleSheet("""
             QFrame {
                 background-color: #14284c;
                 border: 1px solid #1b3a69;
                 border-radius: 4px;
             }
+            QLabel { color: #c5c9ce; }
         """)
-        controls_layout = QHBoxLayout(controls_frame)
-        controls_layout.setContentsMargins(12, 8, 12, 8)
-        controls_layout.setSpacing(12)
-        
-        # Seletor de fonte
-        controls_layout.addWidget(QLabel("Fonte:"))
-        
+        vision_row = QHBoxLayout(vision_frame)
+        vision_row.setContentsMargins(12, 8, 12, 8)
+        vision_row.setSpacing(8)
+
+        vision_row.addWidget(QLabel("Fonte:"))
         self._source_combo = QComboBox()
-        self._source_combo.setMinimumWidth(150)
+        self._source_combo.setMinimumWidth(160)
+        self._source_combo.setMaximumWidth(220)
         self._source_combo.addItems([
             "Arquivo de Vídeo",
             "Câmera USB",
             "Câmera GigE",
-            "Câmera GenTL (Omron Sentech)",
+            "Câmera GenTL",
         ])
         self._source_combo.currentIndexChanged.connect(self._on_source_changed)
-        controls_layout.addWidget(self._source_combo)
-        
-        self._source_path_btn = QPushButton("Selecionar...")
+        vision_row.addWidget(self._source_combo)
+
+        self._source_path_btn = QPushButton("Selecionar…")
+        self._source_path_btn.setMinimumWidth(100)
         self._source_path_btn.clicked.connect(self._select_video_file)
-        controls_layout.addWidget(self._source_path_btn)
-        
-        self._gentl_cti_btn = QPushButton("Selecionar CTI...")
-        self._gentl_cti_btn.setToolTip("Selecionar arquivo CTI GenTL (ex.: Omron Sentech)")
+        vision_row.addWidget(self._source_path_btn)
+
+        self._gentl_cti_btn = QPushButton("Selecionar CTI…")
+        self._gentl_cti_btn.setToolTip("Selecionar arquivo CTI GenTL")
         self._gentl_cti_btn.clicked.connect(self._select_gentl_cti_file)
         self._gentl_cti_btn.setVisible(False)
-        controls_layout.addWidget(self._gentl_cti_btn)
+        self._gentl_cti_btn.setMinimumWidth(120)
+        vision_row.addWidget(self._gentl_cti_btn)
 
-        self._gentl_settings_btn = QPushButton("Ajustes da câmera...")
-        self._gentl_settings_btn.setToolTip("Abrir tela de ajustes da câmera GenTL (gain, exposição). Requer stream ativo.")
+        self._gentl_settings_btn = QPushButton("Ajustes câmera…")
+        self._gentl_settings_btn.setToolTip("Ajustes GenTL (gain, exposição). Requer stream activo.")
         self._gentl_settings_btn.clicked.connect(self._open_gentl_camera_settings)
         self._gentl_settings_btn.setVisible(False)
-        controls_layout.addWidget(self._gentl_settings_btn)
-        
-        controls_layout.addStretch()
-        
-        # Botões de controle
+        self._gentl_settings_btn.setMinimumWidth(120)
+        vision_row.addWidget(self._gentl_settings_btn)
+
+        vision_row.addStretch(1)
+
+        btn_run = """
+            QPushButton {
+                color: white; font-weight: bold; padding: 8px 14px;
+                border-radius: 4px; min-width: 96px;
+            }
+            QPushButton:disabled { background-color: #6c757d; }
+        """
         self._play_btn = QPushButton("▶ Iniciar")
-        self._play_btn.setMinimumWidth(100)
-        self._play_btn.setStyleSheet("""
-            QPushButton {
-                background-color: #28a745;
-                color: white;
-                font-weight: bold;
-                padding: 8px 16px;
-                border-radius: 4px;
-            }
-            QPushButton:hover {
-                background-color: #218838;
-            }
-            QPushButton:disabled {
-                background-color: #6c757d;
-            }
-        """)
+        self._play_btn.setStyleSheet(btn_run + "QPushButton { background-color: #28a745; } QPushButton:hover { background-color: #218838; }")
         self._play_btn.clicked.connect(self._start_system)
-        controls_layout.addWidget(self._play_btn)
-        
+        vision_row.addWidget(self._play_btn)
+
         self._pause_btn = QPushButton("⏸ Pausar")
-        self._pause_btn.setMinimumWidth(100)
         self._pause_btn.setEnabled(False)
-        self._pause_btn.setStyleSheet("""
-            QPushButton {
-                background-color: #ffc107;
-                color: black;
-                font-weight: bold;
-                padding: 8px 16px;
-                border-radius: 4px;
-            }
-            QPushButton:hover {
-                background-color: #e0a800;
-            }
-            QPushButton:disabled {
-                background-color: #6c757d;
-                color: white;
-            }
-        """)
-        self._pause_btn.clicked.connect(self._toggle_pause)
-        controls_layout.addWidget(self._pause_btn)
-        
-        self._stop_btn = QPushButton("⏹ Parar")
-        self._stop_btn.setMinimumWidth(100)
-        self._stop_btn.setEnabled(False)
-        self._stop_btn.setStyleSheet("""
-            QPushButton {
-                background-color: #dc3545;
-                color: white;
-                font-weight: bold;
-                padding: 8px 16px;
-                border-radius: 4px;
-            }
-            QPushButton:hover {
-                background-color: #c82333;
-            }
-            QPushButton:disabled {
-                background-color: #6c757d;
-            }
-        """)
-        self._stop_btn.clicked.connect(self._stop_system)
-        controls_layout.addWidget(self._stop_btn)
-        
-        # Separador visual
-        sep = QFrame()
-        sep.setFrameShape(QFrame.VLine)
-        sep.setStyleSheet("background-color: #1b3a69;")
-        controls_layout.addWidget(sep)
-        
-        # Autorizar envio ao CLP (modo manual, apos deteccao)
-        self._authorize_send_btn = QPushButton("Autorizar envio ao CLP")
-        self._authorize_send_btn.setMinimumWidth(140)
-        self._authorize_send_btn.setEnabled(False)
-        self._authorize_send_btn.setVisible(False)
-        self._authorize_send_btn.setStyleSheet("""
-            QPushButton {
-                background-color: #26477e;
-                color: white;
-                font-weight: bold;
-                padding: 8px 16px;
-                border-radius: 4px;
-            }
-            QPushButton:hover {
-                background-color: #1b3a69;
-            }
-            QPushButton:disabled {
-                background-color: #6c757d;
-            }
-        """)
-        self._authorize_send_btn.setToolTip("Objeto detectado. Clique para enviar coordenadas ao CLP e iniciar o ciclo.")
-        self._authorize_send_btn.clicked.connect(self._authorize_send_to_plc)
-        controls_layout.addWidget(self._authorize_send_btn)
-        
-        # Controles de ciclo pick-and-place
-        self._continuous_cb = QCheckBox("Modo Continuo")
-        self._continuous_cb.setChecked(False)
-        self._continuous_cb.setToolTip(
-            "Marcado: ciclos de pick-and-place executam automaticamente.\n"
-            "Desmarcado: aguarda 'Novo Ciclo' ao final de cada ciclo."
+        self._pause_btn.setStyleSheet(
+            btn_run
+            + "QPushButton { background-color: #ffc107; color: black; }"
+            + "QPushButton:hover { background-color: #e0a800; }"
+            + "QPushButton:disabled { color: white; background-color: #6c757d; }"
         )
-        self._continuous_cb.stateChanged.connect(self._on_cycle_mode_changed)
-        controls_layout.addWidget(self._continuous_cb)
-        
-        self._new_cycle_btn = QPushButton("Novo Ciclo")
-        self._new_cycle_btn.setMinimumWidth(100)
-        self._new_cycle_btn.setEnabled(False)
-        self._new_cycle_btn.setStyleSheet("""
-            QPushButton {
-                background-color: #26477e;
-                color: white;
-                font-weight: bold;
-                padding: 8px 16px;
-                border-radius: 4px;
-            }
-            QPushButton:hover {
-                background-color: #1b3a69;
-            }
-            QPushButton:disabled {
-                background-color: #6c757d;
-            }
-        """)
-        self._new_cycle_btn.setToolTip("Autoriza o proximo ciclo de pick-and-place (modo manual)")
-        self._new_cycle_btn.clicked.connect(self._authorize_new_cycle)
-        controls_layout.addWidget(self._new_cycle_btn)
-        
-        controls_layout.addStretch()
-        
+        self._pause_btn.clicked.connect(self._toggle_pause)
+        vision_row.addWidget(self._pause_btn)
+
+        self._stop_btn = QPushButton("⏹ Parar")
+        self._stop_btn.setEnabled(False)
+        self._stop_btn.setStyleSheet(btn_run + "QPushButton { background-color: #dc3545; } QPushButton:hover { background-color: #c82333; }")
+        self._stop_btn.clicked.connect(self._stop_system)
+        vision_row.addWidget(self._stop_btn)
+
         self._exit_btn = QPushButton("Sair")
         self._exit_btn.setToolTip("Encerra o sistema (Cmd+Q no macOS)")
+        self._exit_btn.setMinimumWidth(72)
         self._exit_btn.setStyleSheet("""
             QPushButton {
-                background-color: #6c757d;
-                color: white;
-                padding: 8px 16px;
-                border-radius: 4px;
+                background-color: #6c757d; color: white;
+                padding: 8px 14px; border-radius: 4px;
             }
-            QPushButton:hover {
-                background-color: #5a6268;
-            }
+            QPushButton:hover { background-color: #5a6268; }
         """)
         self._exit_btn.clicked.connect(self._on_exit_clicked)
-        controls_layout.addWidget(self._exit_btn)
-        
-        layout.addWidget(controls_frame)
+        vision_row.addWidget(self._exit_btn)
+
+        controls_wrap.addWidget(vision_frame)
+
+        # --- Linha 2: Mark2 ---
+        mark2_frame = QFrame()
+        mark2_frame.setStyleSheet("""
+            QFrame {
+                background-color: #14284c;
+                border: 1px solid #1b3a69;
+                border-radius: 4px;
+            }
+            QLabel { color: #c5c9ce; }
+            QCheckBox { color: #e5e7eb; }
+        """)
+        mark2_col = QVBoxLayout(mark2_frame)
+        mark2_col.setContentsMargins(12, 8, 12, 8)
+        mark2_col.setSpacing(6)
+
+        mark2_style = """
+            QPushButton {
+                background-color: #26477e;
+                color: white;
+                font-weight: bold;
+                padding: 7px 12px;
+                border-radius: 4px;
+                min-width: 110px;
+            }
+            QPushButton:hover { background-color: #1b3a69; }
+            QPushButton:disabled { background-color: #6c757d; }
+        """
+        mark2_danger = """
+            QPushButton {
+                background-color: #a71d2a;
+                color: white;
+                font-weight: bold;
+                padding: 7px 12px;
+                border-radius: 4px;
+                min-width: 110px;
+            }
+            QPushButton:hover { background-color: #8b1822; }
+            QPushButton:disabled { background-color: #6c757d; }
+        """
+
+        row_a = QHBoxLayout()
+        row_a.setSpacing(8)
+        title_m2 = QLabel("Mark2")
+        title_m2.setStyleSheet("color: #e5e7eb; font-weight: bold;")
+        row_a.addWidget(title_m2)
+
+        self._mark2_connect_btn = QPushButton("Conectar")
+        self._mark2_connect_btn.setStyleSheet(mark2_style)
+        self._mark2_connect_btn.clicked.connect(self._mark2_connect)
+        row_a.addWidget(self._mark2_connect_btn)
+
+        self._mark2_disconnect_btn = QPushButton("Desconectar")
+        self._mark2_disconnect_btn.setStyleSheet(mark2_style)
+        self._mark2_disconnect_btn.clicked.connect(self._mark2_disconnect)
+        row_a.addWidget(self._mark2_disconnect_btn)
+
+        row_a.addWidget(QLabel("Modo:"))
+        self._mode_combo = QComboBox()
+        self._mode_combo.setMinimumWidth(100)
+        self._mode_combo.addItem("Manual", "manual")
+        self._mode_combo.addItem("Semi", "semi")
+        self._mode_combo.addItem("Auto", "auto")
+        mode = self._settings.mark2.operation.mode
+        idx = max(0, self._mode_combo.findData(mode))
+        self._mode_combo.setCurrentIndex(idx)
+        self._mode_combo.currentIndexChanged.connect(self._on_mark2_mode_changed)
+        row_a.addWidget(self._mode_combo)
+
+        self._authorize_send_btn = QPushButton("Autorizar PnP")
+        self._authorize_send_btn.setEnabled(False)
+        self._authorize_send_btn.setStyleSheet(mark2_style)
+        self._authorize_send_btn.setToolTip(
+            "Modo semi: objecto estável — autoriza pick-and-place."
+        )
+        self._authorize_send_btn.clicked.connect(self._authorize_pick)
+        row_a.addWidget(self._authorize_send_btn)
+
+        self._smoke_cb = QCheckBox("Novo movimento embalagem → motor 1s")
+        self._smoke_cb.setChecked(self._settings.mark2.operation.smoke_detection_trigger)
+        self._smoke_cb.setToolTip(
+            "Quando a embalagem se desloca (≥ tolerância px), aciona a garra uma vez "
+            "durante ~1 segundo. Não repete sem novo movimento."
+        )
+        self._smoke_cb.stateChanged.connect(self._on_smoke_mode_changed)
+        row_a.addWidget(self._smoke_cb)
+        row_a.addStretch(1)
+        mark2_col.addLayout(row_a)
+
+        row_b = QHBoxLayout()
+        row_b.setSpacing(8)
+
+        self._mark2_home_btn = QPushButton("Home")
+        self._mark2_home_btn.setStyleSheet(mark2_style)
+        self._mark2_home_btn.clicked.connect(self._mark2.home)
+        row_b.addWidget(self._mark2_home_btn)
+
+        self._mark2_open_gripper_btn = QPushButton("Abrir garra")
+        self._mark2_open_gripper_btn.setStyleSheet(mark2_style)
+        self._mark2_open_gripper_btn.clicked.connect(self._mark2.open_gripper)
+        row_b.addWidget(self._mark2_open_gripper_btn)
+
+        self._mark2_close_gripper_btn = QPushButton("Fechar garra")
+        self._mark2_close_gripper_btn.setStyleSheet(mark2_style)
+        self._mark2_close_gripper_btn.clicked.connect(self._mark2.close_gripper)
+        row_b.addWidget(self._mark2_close_gripper_btn)
+
+        self._mark2_test_move_btn = QPushButton("Testar movimento")
+        self._mark2_test_move_btn.setStyleSheet(mark2_style)
+        self._mark2_test_move_btn.clicked.connect(self._mark2.test_move)
+        row_b.addWidget(self._mark2_test_move_btn)
+
+        self._mark2_execute_pnp_btn = QPushButton("Executar PnP")
+        self._mark2_execute_pnp_btn.setStyleSheet(mark2_style)
+        self._mark2_execute_pnp_btn.clicked.connect(self._mark2.execute_pick_place_locked)
+        row_b.addWidget(self._mark2_execute_pnp_btn)
+
+        self._mark2_stop_btn = QPushButton("STOP")
+        self._mark2_stop_btn.setStyleSheet(mark2_danger)
+        self._mark2_stop_btn.clicked.connect(self._mark2.stop)
+        row_b.addWidget(self._mark2_stop_btn)
+
+        self._mark2_reset_btn = QPushButton("Reset erro")
+        self._mark2_reset_btn.setStyleSheet(mark2_style)
+        self._mark2_reset_btn.clicked.connect(self._mark2.reset_error)
+        row_b.addWidget(self._mark2_reset_btn)
+
+        row_b.addStretch(1)
+        mark2_col.addLayout(row_b)
+
+        controls_wrap.addWidget(mark2_frame)
+        layout.addLayout(controls_wrap)
     
     def _load_roi_from_settings(self) -> None:
         """Carrega ROI das configurações para o painel. Padrão: metade da área a partir do centro."""
@@ -416,7 +457,7 @@ class OperationPage(QWidget):
             if cti:
                 self._source_caption.setText(f"Fonte: Câmera GenTL — {Path(cti).name}")
             else:
-                self._source_caption.setText("Fonte: Câmera GenTL (Omron Sentech) — use 'Selecionar CTI...'")
+                self._source_caption.setText("Fonte: Câmera GenTL — use 'Selecionar CTI…'")
     
     def _connect_signals(self) -> None:
         """Conecta os sinais."""
@@ -430,24 +471,18 @@ class OperationPage(QWidget):
         self._inference_engine.detection_result.connect(self._video_widget.update_detections)
         self._inference_engine.detection_result.connect(self._on_detection_result)
         self._inference_engine.detection_event.connect(self._on_detection)
-        
-        # CIP
-        self._cip_client.state_changed.connect(self._status_panel.set_connection_state)
-        self._cip_client.connection_error.connect(self._on_cip_error)
-        
-        # Supervisor MVP (envio único ao CLP)
-        self._vision_supervisor.set_roi_getter(self._status_panel.get_roi)
-        self._vision_supervisor.pick_sent.connect(self._on_supervisor_pick_sent)
-        self._vision_supervisor.pick_skipped.connect(self._on_supervisor_pick_skipped)
-        
-        # Robô (FSM completo — opcional)
-        if self._robot_controller is not None:
-            self._robot_controller.state_changed.connect(self._status_panel.set_robot_state)
-            self._robot_controller.state_changed.connect(self._on_robot_state_changed)
-            self._robot_controller.cycle_completed.connect(self._on_cycle_completed)
-            self._robot_controller.error_occurred.connect(self._on_robot_error)
-            self._robot_controller.cycle_step.connect(self._on_cycle_step)
-            self._robot_controller.cycle_summary.connect(self._on_cycle_summary)
+
+        # Mark2
+        self._mark2.state_changed.connect(self._status_panel.set_robot_state)
+        self._mark2.state_changed.connect(self._on_mark2_state_changed)
+        self._mark2.status_message.connect(self._status_step_label.setText)
+        self._mark2.status_message.connect(self._video_widget.set_robot_status_text)
+        self._mark2.connected_changed.connect(self._status_panel.set_mark2_connected)
+        self._mark2.coordinates_updated.connect(self._on_mark2_coordinates)
+        self._mark2.angles_changed.connect(self._status_panel.set_angles)
+        self._mark2.error_occurred.connect(self._on_mark2_error)
+        self._mark2.cycle_completed.connect(self._on_mark2_cycle_completed)
+        self._mark2.package_locked.connect(self._on_mark2_package_locked)
         
         # ROI (persiste em settings; Salvar Config na aba Configuração persiste no arquivo)
         self._status_panel.roi_changed.connect(self._on_roi_changed)
@@ -480,7 +515,7 @@ class OperationPage(QWidget):
         
         # Determina fonte selecionada na UI
         source_types = ["video", "usb", "gige", "gentl"]
-        source_labels = ["Arquivo de Vídeo", "Câmera USB", "Câmera GigE", "Câmera GenTL (Omron Sentech)"]
+        source_labels = ["Arquivo de Vídeo", "Câmera USB", "Câmera GigE", "Câmera GenTL"]
         source_index = self._source_combo.currentIndex()
         source_type = source_types[source_index]
         
@@ -621,16 +656,13 @@ class OperationPage(QWidget):
         self._finish_start_system_after_model(source_label)
     
     def _finish_start_system_after_model(self, source_label: str) -> None:
-        """Conclui a inicialização após o modelo estar carregado (inicia inferência, CLP, atualiza UI)."""
+        """Conclui a inicialização após o modelo estar carregado (inferência, Mark2, UI)."""
         if not self._inference_engine.start():
             self._event_console.add_error("Falha ao iniciar inferência")
             self._stream_manager.stop()
             return
         self._event_console.add_info("Inferência iniciada - detecção ativa")
-        cycle_mode = "continuous" if self._continuous_cb.isChecked() else "manual"
-        if self._robot_controller is not None:
-            self._robot_controller.set_cycle_mode(cycle_mode)
-        asyncio.create_task(self._connect_plc_and_start_robot())
+        self._connect_mark2()
         self._is_running = True
 
         if self._settings.output.rtsp_enabled:
@@ -733,145 +765,21 @@ class OperationPage(QWidget):
         if self._is_running:
             self._stop_system()
         else:
-            if self._robot_controller is not None:
-                self._robot_controller.stop()
-        self._cip_client.shutdown_for_exit()
+            self._mark2.stop_worker()
 
-    async def _connect_plc_and_start_robot(self) -> None:
-        """
-        Conecta ao CLP em modo real por default.
-        Se falhar, avisa e inicia em modo simulado com robo virtual.
-        """
+    def _connect_mark2(self) -> None:
+        """Inicia worker serial e conecta ao Mark2."""
         try:
-            # Tenta conectar (real primeiro, fallback para simulado)
-            await self._cip_client.connect()
-            
-            if self._cip_client.is_simulated:
-                self._event_console.add_warning(
-                    "CLP real nao alcancavel - operando em modo SIMULADO.\n"
-                    "Robo virtual ativo: pick-and-place simulado com delays."
-                )
-                self._logger.warning("plc_fallback_to_simulated")
-            else:
-                self._event_console.add_success(
-                    f"Conectado ao CLP real ({self._settings.cip.ip}:{self._settings.cip.port})"
-                )
-            
-            # Seta VisionReady = True
-            try:
-                await self._cip_client.set_vision_ready(True)
-                self._event_console.add_info("VisionReady = True enviado ao CLP")
-            except Exception as e:
-                self._logger.warning("failed_to_set_vision_ready", error=str(e))
-            
-            # Inicia controlador de robo (FSM completo — opcional)
-            if self._robot_controller is not None:
-                self._robot_controller.start()
-                mode_label = "continuo" if self._continuous_cb.isChecked() else "manual"
-                self._event_console.add_info(
-                    f"Controlador de robo iniciado (modo {mode_label})"
-                )
-            else:
-                self._event_console.add_info(
-                    "Supervisor MVP: envio direto de coordenadas ao CLP"
-                )
-                
+            self._mark2.start_worker()
+            self._mark2.connect_robot()
+            mode = self._mode_combo.currentData()
+            if mode:
+                self._mark2.set_mode(mode)
+            self._event_console.add_info("A conectar Mark2…")
+            self._logger.info("mark2_connect_requested")
         except Exception as e:
-            self._event_console.add_warning(
-                f"Erro ao conectar CLP: {e}\n"
-                f"Sistema operando em modo simulado."
-            )
-            self._logger.error("plc_connect_exception", error=str(e))
-            # Garante conexão simulada
-            if not self._cip_client.is_connected:
-                await self._cip_client._connect_simulated()
-            if self._robot_controller is not None:
-                self._robot_controller.start()
-    
-    async def _connect_plc(self) -> None:
-        """Conecta ao CLP."""
-        try:
-            await self._cip_client.connect()
-            self._event_console.add_success("Conectado ao CLP")
-        except Exception as e:
-            self._event_console.add_warning(f"CLP em modo simulado: {e}")
-    
-    async def _send_detection_to_plc(
-        self,
-        centroid_x: float,
-        centroid_y: float,
-        confidence: float,
-        detection_count: int,
-        processing_time: float,
-        angle_deg: float = 0.0,
-        area: float = 0.0,
-    ) -> None:
-        """
-        Envia dados de detecção ao CLP via TAGs com handshake básico.
-        
-        Handshake:
-        1. Verifica se CLP está conectado
-        2. (Opcional) Lê RobotReady para confirmar que CLP aceita dados
-        3. Escreve as TAGs de detecção
-        
-        TAGs utilizadas:
-        - PRODUCT_DETECTED: bool
-        - CENTROID_X: float
-        - CENTROID_Y: float
-        - CONFIDENCE: float
-        - DETECTION_COUNT: int
-        - PROCESSING_TIME: float
-        """
-        try:
-            # Checagem de status antes de enviar
-            if not self._cip_client._state.is_connected:
-                self._logger.debug("send_detection_skipped_not_connected")
-                return
-            
-            # Handshake: tenta ler RobotReady (se falhar, continua mesmo assim)
-            robot_ready = True  # Default para modo simulado ou se leitura falhar
-            try:
-                robot_ready = await self._cip_client.read_tag("RobotReady")
-            except Exception:
-                pass  # Em modo simulado ou erro de leitura, assume ready
-            
-            if not robot_ready:
-                self._logger.debug("send_detection_skipped_robot_not_ready")
-                return
-            
-            # Usa o método write_detection_result do CIPClient
-            await self._cip_client.write_detection_result(
-                detected=True,
-                centroid_x=centroid_x,
-                centroid_y=centroid_y,
-                confidence=confidence,
-                detection_count=detection_count,
-                processing_time=processing_time,
-                angle_deg=angle_deg,
-                area=area,
-            )
-            
-            self._logger.debug(
-                "detection_sent_to_plc",
-                centroid_x=centroid_x,
-                centroid_y=centroid_y,
-                robot_ready=robot_ready,
-            )
-            
-        except Exception as e:
-            self._logger.warning("failed_to_send_detection", error=str(e))
-            self._status_panel.set_last_error(str(e))
-    
-    async def _shutdown_plc_connection(self) -> None:
-        """Seta VisionReady = False e desconecta do CLP."""
-        try:
-            if self._cip_client._state.is_connected:
-                await self._cip_client.set_vision_ready(False)
-                self._logger.info("vision_ready_false_sent")
-        except Exception as e:
-            self._logger.warning("failed_to_set_vision_ready_false", error=str(e))
-        finally:
-            await self._cip_client.disconnect()
+            self._event_console.add_warning(f"Erro ao iniciar Mark2: {e}")
+            self._logger.error("mark2_connect_exception", error=str(e))
     
     @Slot()
     def _stop_system(self) -> None:
@@ -890,15 +798,10 @@ class OperationPage(QWidget):
                 self._logger.warning("mjpeg_stop_error", error=str(e))
             self._mjpeg_server = None
 
-        if self._robot_controller is not None:
-            self._robot_controller.stop()
+        self._mark2.stop()
+        self._mark2.disconnect_robot()
         self._inference_engine.stop()
         self._stream_manager.stop()
-
-        try:
-            self._run_shutdown_plc_sync()
-        except Exception as e:
-            self._logger.warning("shutdown_plc_error", error=str(e))
 
         self._update_ui_state()
         self._pause_btn.setText("⏸ Pausar")
@@ -907,19 +810,18 @@ class OperationPage(QWidget):
         self._event_console.add_info("Sistema parado")
         self._status_panel.set_system_status("STOPPED")
 
-    def _run_shutdown_plc_sync(self) -> None:
-        """Executa desconexão do CLP sem bloquear (evita deadlock ao sair)."""
-        try:
-            loop = asyncio.get_event_loop()
-            if not loop.is_running():
-                return
-            # Fire-and-forget: agenda desconexão sem esperar (evita nested.exec() que
-            # causava travamento ao clicar em Sair)
-            asyncio.ensure_future(self._shutdown_plc_connection())
-        except RuntimeError:
-            pass
-        except Exception as e:
-            self._logger.warning("shutdown_plc_sync_error", error=str(e))
+    @Slot()
+    def _mark2_connect(self) -> None:
+        """Conecta Mark2 manualmente (botão)."""
+        self._mark2.start_worker()
+        self._mark2.connect_robot()
+        self._event_console.add_info("A conectar Mark2…", "Mark2")
+
+    @Slot()
+    def _mark2_disconnect(self) -> None:
+        """Desconecta Mark2 manualmente."""
+        self._mark2.disconnect_robot()
+        self._event_console.add_info("Mark2 desconectado", "Mark2")
     
     @Slot()
     def _toggle_pause(self) -> None:
@@ -950,23 +852,17 @@ class OperationPage(QWidget):
         self._pause_btn.setEnabled(self._is_running)
         self._stop_btn.setEnabled(self._is_running)
         self._source_combo.setEnabled(not self._is_running)
-        self._source_path_btn.setEnabled(True)  # Sempre habilitado
-        
-        # Controles de ciclo (FSM)
-        if self._robot_fsm_enabled and self._robot_controller is not None:
-            is_manual = not self._continuous_cb.isChecked()
-            self._new_cycle_btn.setEnabled(
-                self._is_running and is_manual
-                and self._robot_controller.state.value == "READY_FOR_NEXT"
-            )
-        
+        self._source_path_btn.setEnabled(True)
+
+        waiting_auth = (
+            self._is_running
+            and self._mark2.state.value == "WAITING_AUTHORIZATION"
+        )
+        self._authorize_send_btn.setEnabled(waiting_auth)
+
         if not self._is_running:
-            if self._robot_fsm_enabled:
-                self._status_step_label.setText("—")
-                self._authorize_send_btn.setVisible(False)
-                self._authorize_send_btn.setEnabled(False)
-            else:
-                self._status_step_label.setText("MVP: detecção + envio direto ao CLP")
+            self._status_step_label.setText("Mark2: desconectado")
+            self._authorize_send_btn.setEnabled(False)
         
         self._status_panel.set_stream_running(self._is_running)
         self._status_panel.set_inference_running(self._is_running)
@@ -1142,12 +1038,10 @@ class OperationPage(QWidget):
             self._event_console.add_info("Modo tela cheia (F11 para sair)")
     
     def _update_fps(self) -> None:
-        """Atualiza FPS no widget de vídeo e latência CIP no painel (RF-06)."""
+        """Atualiza FPS no widget de vídeo."""
         if self._stream_manager.is_running:
             fps = self._stream_manager.get_fps()
             self._video_widget.set_fps(fps)
-        latency_ms = MetricsCollector().get_last_value("cip_response_time")
-        self._status_panel.set_latency_ms(latency_ms)
     
     @Slot()
     def _on_stream_started(self) -> None:
@@ -1282,74 +1176,83 @@ class OperationPage(QWidget):
     
     @Slot(object)
     def _on_detection_result(self, result) -> None:
-        """Handler MVP: envia alvo de pick ao CLP via VisionSupervisor."""
-        if not self._is_running or self._robot_fsm_enabled:
+        """Encaminha detecção ao Mark2 (calibração + FSM)."""
+        if not self._is_running:
             return
-        self._vision_supervisor.handle_detection_result(result)
+        self._mark2.process_detection_result(result)
 
     @Slot(object)
-    def _on_supervisor_pick_sent(self, event) -> None:
-        """Confirma envio ao CLP no modo MVP."""
-        if not event.detected:
+    def _on_detection(self, event) -> None:
+        """Handler para eventos de detecção — atualiza painel."""
+        if not self._is_running or not event.detected:
             return
-        mm_per_px = self._settings.preprocess.roi_calibration_mm_per_px or 1.0
-        cx_mm = event.centroid[0] * mm_per_px
-        cy_mm = event.centroid[1] * mm_per_px
-        area_mm2 = (event.area_px or 0.0) * (mm_per_px ** 2)
-        self._event_console.add_info(
-            f"CLP: PICK ({cx_mm:.1f}, {cy_mm:.1f}) mm "
-            f"ang={float(event.angle_deg or 0):.1f}° A={area_mm2:.0f}mm² "
-            f"Conf={event.confidence:.0%}",
-            "CLP",
+        self._detection_count += 1
+        self._event_console.add_success(
+            f"Detectado: {event.class_name} ({event.confidence:.0%})",
+            "Detecção",
         )
         self._status_panel.update_detection(event)
 
+    def _on_mark2_mode_changed(self, _index: int = 0) -> None:
+        """Altera modo Mark2 (manual / semi / auto)."""
+        mode = self._mode_combo.currentData()
+        if not mode:
+            return
+        self._mark2.set_mode(mode)
+        labels = {"manual": "Manual", "semi": "Semi", "auto": "Auto"}
+        self._event_console.add_info(f"Modo Mark2: {labels.get(mode, mode)}", "Mark2")
+
+    def _on_smoke_mode_changed(self, _state: int) -> None:
+        """Ativa/desativa smoke test (detecção → motor)."""
+        enabled = self._smoke_cb.isChecked()
+        self._settings.mark2.operation.smoke_detection_trigger = enabled
+        self._mark2.mark2.operation.smoke_detection_trigger = enabled
+        label = "activado" if enabled else "desactivado"
+        self._event_console.add_info(f"Teste integração (smoke) {label}", "Mark2")
+
+    @Slot()
+    def _authorize_pick(self) -> None:
+        """Autoriza pick-and-place no modo semi."""
+        self._mark2.authorize_pick()
+        self._authorize_send_btn.setEnabled(False)
+        self._event_console.add_info("Pick-and-Place autorizado pelo operador", "Mark2")
+
     @Slot(str)
-    def _on_supervisor_pick_skipped(self, reason: str) -> None:
-        self._logger.debug("supervisor_pick_skipped", reason=reason)
-    
+    def _on_mark2_state_changed(self, state_value: str) -> None:
+        """Actualiza botão de autorização conforme estado Mark2."""
+        waiting = state_value == "WAITING_AUTHORIZATION"
+        self._authorize_send_btn.setEnabled(self._is_running and waiting)
+
+    @Slot(dict)
+    def _on_mark2_coordinates(self, coords: dict) -> None:
+        """Actualiza painel e overlay com coordenadas de pega."""
+        self._status_panel.set_pick_and_coords(coords)
+        px = coords.get("pixel")
+        if px:
+            self._video_widget.set_pick_point((float(px[0]), float(px[1])))
+
     @Slot(object)
-    def _on_detection(self, event) -> None:
-        """Handler para detecção (FSM completo quando habilitado)."""
-        if not self._is_running:
-            return
-        if not event.detected:
-            return
-        self._detection_count += 1
-        if self._robot_fsm_enabled:
-            self._event_console.add_success(
-                f"Detectado: {event.class_name} ({event.confidence:.0%})",
-                "Detecção",
-            )
-            self._status_panel.update_detection(event)
-            if self._robot_controller is not None:
-                self._robot_controller.process_detection(event)
-        elif event.detected:
-            self._status_panel.update_detection(event)
-    
-    @Slot(int)
-    def _on_cycle_completed(self, cycle_number: int) -> None:
-        """Handler para ciclo completado."""
-        self._event_console.add_success(f"Ciclo {cycle_number} completado", "Robô")
-    
-    def _on_cycle_mode_changed(self, state: int) -> None:
-        """Handler para mudança de modo de ciclo (manual/contínuo)."""
-        if self._robot_controller is None:
-            return
-        mode = "continuous" if self._continuous_cb.isChecked() else "manual"
-        self._robot_controller.set_cycle_mode(mode)
-        self._new_cycle_btn.setEnabled(not self._continuous_cb.isChecked() and self._is_running)
-        label = "Contínuo" if mode == "continuous" else "Manual"
-        self._event_console.add_info(f"Modo de ciclo: {label}")
-    
-    def _authorize_new_cycle(self) -> None:
-        """Autoriza o próximo ciclo de pick-and-place (modo manual)."""
-        if self._robot_controller is None:
-            return
-        self._robot_controller.authorize_next_cycle()
-        self._new_cycle_btn.setEnabled(False)
-        self._event_console.add_info("Novo ciclo autorizado pelo operador")
-    
+    def _on_mark2_package_locked(self, package) -> None:
+        """Objecto estável bloqueado — log no console."""
+        u, v = package.pick_point_px
+        self._event_console.add_info(
+            f"Objecto bloqueado: pega ({u:.0f}, {v:.0f}) px",
+            "Mark2",
+        )
+
+    @Slot()
+    def _on_mark2_cycle_completed(self) -> None:
+        """Handler para ciclo pick-and-place concluído."""
+        self._event_console.add_success("Pick-and-Place concluído", "Mark2")
+        self._video_widget.set_pick_point(None)
+
+    @Slot(str)
+    def _on_mark2_error(self, error: str) -> None:
+        """Handler para erro Mark2."""
+        self._error_count += 1
+        self._event_console.add_error(f"Erro Mark2: {error}", "Mark2")
+        self._status_panel.set_last_error(error)
+
     def _on_exit_clicked(self) -> None:
         """Fecha o sistema (mesmo fluxo do menu Arquivo → Sair)."""
         mw = self.window()
@@ -1357,125 +1260,3 @@ class OperationPage(QWidget):
             mw._confirm_and_exit()
         elif mw:
             mw.close()
-    
-    def _authorize_send_to_plc(self) -> None:
-        """Autoriza envio das coordenadas ao CLP apos deteccao (modo manual)."""
-        if self._robot_controller is None:
-            return
-        self._robot_controller.authorize_send_to_plc()
-        self._authorize_send_btn.setEnabled(False)
-        self._event_console.add_info("Envio ao CLP autorizado pelo operador")
-    
-    def _status_message_for_state(self, state_value: str) -> str:
-        """Mensagem amigavel para a barra de status conforme estado do robo."""
-        from control.robot_controller import RobotControlState
-        messages = {
-            RobotControlState.INITIALIZING.value: "Inicializando conexao com CLP...",
-            RobotControlState.WAITING_AUTHORIZATION.value: "Aguardando autorizacao do CLP para deteccao...",
-            RobotControlState.DETECTING.value: "Aguardando deteccao de embalagem...",
-            RobotControlState.WAITING_SEND_AUTHORIZATION.value: "Objeto detectado. Aguardando autorizacao para envio ao CLP.",
-            RobotControlState.SENDING_DATA.value: "Enviando coordenadas ao CLP...",
-            RobotControlState.WAITING_ACK.value: "Aguardando ACK do robo...",
-            RobotControlState.ACK_CONFIRMED.value: "ACK recebido. Aguardando PICK...",
-            RobotControlState.WAITING_PICK.value: "Aguardando PICK (coleta)...",
-            RobotControlState.WAITING_PLACE.value: "Aguardando PLACE (posicionamento)...",
-            RobotControlState.WAITING_CYCLE_START.value: "Aguardando sinal de ciclo completo...",
-            RobotControlState.READY_FOR_NEXT.value: "Ciclo finalizado. Aguardando 'Novo Ciclo' (modo manual).",
-            RobotControlState.ERROR.value: "Erro no ciclo.",
-            RobotControlState.TIMEOUT.value: "Timeout. Aguardando novo ciclo.",
-            RobotControlState.SAFETY_BLOCKED.value: "Seguranca ativa. Aguardando liberacao.",
-            RobotControlState.STOPPED.value: "Parado.",
-        }
-        return messages.get(state_value, state_value)
-    
-    @Slot(str)
-    def _on_robot_state_changed(self, state_value: str) -> None:
-        """Handler para mudanca de estado do robo: botoes e barra de status."""
-        if self._robot_controller is None:
-            return
-        from control.robot_controller import RobotControlState
-        
-        # Barra de status
-        self._status_step_label.setText(self._status_message_for_state(state_value))
-        
-        # Botao Novo Ciclo
-        if (
-            state_value == RobotControlState.READY_FOR_NEXT.value
-            and self._robot_controller.cycle_mode == "manual"
-            and self._is_running
-        ):
-            self._new_cycle_btn.setEnabled(True)
-        else:
-            self._new_cycle_btn.setEnabled(False)
-        
-        # Botao Autorizar envio ao CLP (modo manual, apos deteccao)
-        if (
-            state_value == RobotControlState.WAITING_SEND_AUTHORIZATION.value
-            and self._robot_controller.cycle_mode == "manual"
-            and self._is_running
-        ):
-            self._authorize_send_btn.setVisible(True)
-            self._authorize_send_btn.setEnabled(True)
-        else:
-            self._authorize_send_btn.setVisible(False)
-            self._authorize_send_btn.setEnabled(False)
-    
-    @Slot(str)
-    def _on_cycle_step(self, step: str) -> None:
-        """Handler para etapa do ciclo — exibe no console e na barra de status."""
-        if not self._is_running:
-            return
-        self._event_console.add_info(f"[Ciclo] {step}", "Robo")
-        self._status_step_label.setText(step)
-    
-    @Slot(list)
-    def _on_cycle_summary(self, steps: list) -> None:
-        """Handler para resumo do ciclo completo — exibe sumário formatado."""
-        if not self._is_running or not steps or self._robot_controller is None:
-            return
-        
-        cycle_num = self._robot_controller.cycle_count
-        
-        # Calcula duração total
-        if len(steps) >= 2:
-            t0 = steps[0]["timestamp"]
-            t1 = steps[-1]["timestamp"]
-            duration = (t1 - t0).total_seconds()
-        else:
-            duration = 0.0
-        
-        self._event_console.add_success(
-            f"===== CICLO #{cycle_num} COMPLETO ({duration:.1f}s) =====",
-            "Ciclo"
-        )
-        for i, s in enumerate(steps, 1):
-            ts = s["timestamp"].strftime("%H:%M:%S")
-            self._event_console.add_info(
-                f"  {i}. [{ts}] {s['step']}",
-                "Ciclo"
-            )
-        self._event_console.add_success(
-            f"{'=' * 45}",
-            "Ciclo"
-        )
-        
-        # Em modo manual, informa que aguarda autorização
-        if self._robot_controller.cycle_mode == "manual":
-            self._event_console.add_warning(
-                "Aguardando operador clicar 'Novo Ciclo' para continuar.",
-                "Ciclo"
-            )
-    
-    @Slot(str)
-    def _on_cip_error(self, error: str) -> None:
-        """Handler para erro CIP (RF-06: último erro na UI)."""
-        self._error_count += 1
-        self._event_console.add_error(f"Erro CIP: {error}", "CLP")
-        self._status_panel.set_last_error(error)
-    
-    @Slot(str)
-    def _on_robot_error(self, error: str) -> None:
-        """Handler para erro do robô (RF-06: último erro na UI)."""
-        self._error_count += 1
-        self._event_console.add_error(f"Erro do robô: {error}", "Robô")
-        self._status_panel.set_last_error(error)

@@ -51,7 +51,7 @@ class ConfigurationPage(QWidget):
     - Fonte de Vídeo
     - Modelo RT-DETR
     - Pré-processamento
-    - Controle (CLP)
+    - Mark2 / serial
     - Output
     """
     
@@ -134,7 +134,7 @@ class ConfigurationPage(QWidget):
         self._tabs.addTab(self._create_entrada_tab(), "Entrada")
         self._tabs.addTab(self._create_deteccao_tab(), "Detecção")
         self._tabs.addTab(self._create_imagem_tab(), "Imagem")
-        self._tabs.addTab(self._create_plc_tab(), "CLP")
+        self._tabs.addTab(self._create_mark2_tab(), "Mark2")
         self._tabs.addTab(self._create_output_tab(), "Saída")
         
         layout.addWidget(self._tabs)
@@ -203,7 +203,7 @@ class ConfigurationPage(QWidget):
         
         layout.addWidget(self._gige_group)
         
-        self._gentl_group = QGroupBox("Câmera GenTL (Omron Sentech)")
+        self._gentl_group = QGroupBox("Câmera GenTL")
         self._gentl_group.setStyleSheet(CONFIG_GROUP_STYLE)
         gentl_layout = QFormLayout(self._gentl_group)
         
@@ -382,72 +382,63 @@ class ConfigurationPage(QWidget):
         self._roi_w.setValue(w)
         self._roi_h.setValue(h)
     
-    def _create_plc_tab(self) -> QWidget:
-        """Cria aba de configuração do CLP."""
+    def _create_mark2_tab(self) -> QWidget:
+        """Aba de configuração do Mark2 / Arduino."""
         widget = QWidget()
         layout = QVBoxLayout(widget)
         layout.setSpacing(16)
-        
-        conn_group = QGroupBox("Conexão CIP/EtherNet-IP")
+
+        conn_group = QGroupBox("Serial Arduino")
         conn_group.setStyleSheet(CONFIG_GROUP_STYLE)
         conn_layout = QFormLayout(conn_group)
-        
-        self._plc_ip = QLineEdit()
-        self._plc_ip.setPlaceholderText("187.99.125.5")
-        conn_layout.addRow("IP do CLP:", self._plc_ip)
-        
-        self._plc_port = QSpinBox()
-        self._plc_port.setRange(1, 65535)
-        self._plc_port.setValue(44818)
-        conn_layout.addRow("Porta CIP:", self._plc_port)
-        
-        self._conn_timeout = QDoubleSpinBox()
-        self._conn_timeout.setRange(1.0, 60.0)
-        self._conn_timeout.setSingleStep(0.5)
-        self._conn_timeout.setSuffix(" s")
-        conn_layout.addRow("Timeout:", self._conn_timeout)
-        
-        self._simulated = QCheckBox("Modo simulado")
-        conn_layout.addRow("", self._simulated)
-        
-        test_btn = QPushButton("Testar Conexão")
-        test_btn.clicked.connect(self._test_plc_connection)
-        conn_layout.addRow("", test_btn)
-        
+
+        self._mark2_port = QLineEdit()
+        self._mark2_port.setPlaceholderText("/dev/cu.usbmodem1101")
+        conn_layout.addRow("Porta:", self._mark2_port)
+
+        self._mark2_baud = QSpinBox()
+        self._mark2_baud.setRange(9600, 250000)
+        self._mark2_baud.setValue(115200)
+        conn_layout.addRow("Baudrate:", self._mark2_baud)
+
+        self._mark2_timeout = QDoubleSpinBox()
+        self._mark2_timeout.setRange(0.5, 60.0)
+        self._mark2_timeout.setSuffix(" s")
+        conn_layout.addRow("Timeout:", self._mark2_timeout)
+
+        self._mark2_enabled = QCheckBox("Integração Mark2 activa")
+        conn_layout.addRow("", self._mark2_enabled)
+
+        self._mark2_smoke = QCheckBox("Novo movimento embalagem → motor 1s")
+        conn_layout.addRow("", self._mark2_smoke)
+
         layout.addWidget(conn_group)
-        
-        retry_group = QGroupBox("Reconexão Automática")
-        retry_group.setStyleSheet(CONFIG_GROUP_STYLE)
-        retry_layout = QFormLayout(retry_group)
-        
-        self._retry_interval = QDoubleSpinBox()
-        self._retry_interval.setRange(0.5, 30.0)
-        self._retry_interval.setSingleStep(0.5)
-        self._retry_interval.setSuffix(" s")
-        retry_layout.addRow("Intervalo:", self._retry_interval)
-        
-        self._max_retries = QSpinBox()
-        self._max_retries.setRange(0, 100)
-        retry_layout.addRow("Máx. tentativas:", self._max_retries)
-        
-        layout.addWidget(retry_group)
-        
-        hb_group = QGroupBox("Heartbeat")
-        hb_group.setStyleSheet(CONFIG_GROUP_STYLE)
-        hb_layout = QFormLayout(hb_group)
-        
-        self._heartbeat_interval = QDoubleSpinBox()
-        self._heartbeat_interval.setRange(0.1, 10.0)
-        self._heartbeat_interval.setSingleStep(0.1)
-        self._heartbeat_interval.setSuffix(" s")
-        hb_layout.addRow("Intervalo:", self._heartbeat_interval)
-        
-        layout.addWidget(hb_group)
-        
+
+        geo_group = QGroupBox("Geometria (mm)")
+        geo_group.setStyleSheet(CONFIG_GROUP_STYLE)
+        geo_layout = QFormLayout(geo_group)
+        self._l1 = QDoubleSpinBox(); self._l1.setRange(0, 1000)
+        self._l2 = QDoubleSpinBox(); self._l2.setRange(0, 1000)
+        self._h0 = QDoubleSpinBox(); self._h0.setRange(0, 1000)
+        geo_layout.addRow("L1 (ombro→cotovelo):", self._l1)
+        geo_layout.addRow("L2 (cotovelo→garra):", self._l2)
+        geo_layout.addRow("H0 (altura ombro):", self._h0)
+        layout.addWidget(geo_group)
+
+        op_group = QGroupBox("Operação")
+        op_group.setStyleSheet(CONFIG_GROUP_STYLE)
+        op_layout = QFormLayout(op_group)
+        self._mark2_mode = QComboBox()
+        self._mark2_mode.addItems(["manual", "semi", "auto"])
+        op_layout.addRow("Modo:", self._mark2_mode)
+        self._mark2_speed = QSpinBox()
+        self._mark2_speed.setRange(1, 90)
+        op_layout.addRow("Velocidade MOVE:", self._mark2_speed)
+        layout.addWidget(op_group)
+
         layout.addStretch()
-        
         return widget
-    
+
     def _create_output_tab(self) -> QWidget:
         """Aba Saída: servidor HTTP MJPEG – copie a URL e cole no navegador."""
         widget = QWidget()
@@ -539,14 +530,17 @@ class ConfigurationPage(QWidget):
         )
         self._profile_combo.setCurrentText(s.preprocess.profile)
         
-        # CLP
-        self._plc_ip.setText(s.cip.ip)
-        self._plc_port.setValue(s.cip.port)
-        self._conn_timeout.setValue(s.cip.connection_timeout)
-        self._simulated.setChecked(s.cip.simulated)
-        self._retry_interval.setValue(s.cip.retry_interval)
-        self._max_retries.setValue(s.cip.max_retries)
-        self._heartbeat_interval.setValue(s.cip.heartbeat_interval)
+        # Mark2
+        self._mark2_port.setText(s.mark2.serial.port)
+        self._mark2_baud.setValue(s.mark2.serial.baudrate)
+        self._mark2_timeout.setValue(s.mark2.serial.timeout_seconds)
+        self._mark2_enabled.setChecked(s.mark2.operation.enabled)
+        self._mark2_smoke.setChecked(s.mark2.operation.smoke_detection_trigger)
+        self._l1.setValue(s.mark2.geometry.link_1_mm)
+        self._l2.setValue(s.mark2.geometry.link_2_mm)
+        self._h0.setValue(s.mark2.geometry.shoulder_height_mm)
+        self._mark2_mode.setCurrentText(s.mark2.operation.mode)
+        self._mark2_speed.setValue(s.mark2.operation.default_move_speed)
         
         # Output
         self._rtsp_enabled.setChecked(s.output.rtsp_enabled)
@@ -587,14 +581,17 @@ class ConfigurationPage(QWidget):
         s.preprocess.roi_calibration_mm_per_px = self._centroid_mm_per_px.value()
         s.preprocess.profile = self._profile_combo.currentText()
         
-        # CLP
-        s.cip.ip = self._plc_ip.text()
-        s.cip.port = self._plc_port.value()
-        s.cip.connection_timeout = self._conn_timeout.value()
-        s.cip.simulated = self._simulated.isChecked()
-        s.cip.retry_interval = self._retry_interval.value()
-        s.cip.max_retries = self._max_retries.value()
-        s.cip.heartbeat_interval = self._heartbeat_interval.value()
+        # Mark2
+        s.mark2.serial.port = self._mark2_port.text()
+        s.mark2.serial.baudrate = self._mark2_baud.value()
+        s.mark2.serial.timeout_seconds = self._mark2_timeout.value()
+        s.mark2.operation.enabled = self._mark2_enabled.isChecked()
+        s.mark2.operation.smoke_detection_trigger = self._mark2_smoke.isChecked()
+        s.mark2.geometry.link_1_mm = self._l1.value()
+        s.mark2.geometry.link_2_mm = self._l2.value()
+        s.mark2.geometry.shoulder_height_mm = self._h0.value()
+        s.mark2.operation.mode = self._mark2_mode.currentText()
+        s.mark2.operation.default_move_speed = self._mark2_speed.value()
         
         # Output
         s.output.rtsp_enabled = self._rtsp_enabled.isChecked()
@@ -607,8 +604,7 @@ class ConfigurationPage(QWidget):
         
         logger.info(
             "config_saved",
-            cip_ip=s.cip.ip,
-            cip_port=s.cip.port,
+            mark2_port=s.mark2.serial.port,
             config_path=str(config_path),
         )
         
@@ -629,7 +625,7 @@ class ConfigurationPage(QWidget):
         
         from config.settings import (
             StreamingSettings, DetectionSettings, PreprocessSettings,
-            CIPSettings, OutputSettings,
+            Mark2Settings, OutputSettings,
         )
         
         # Aplica defaults no objeto settings em memória
@@ -637,7 +633,7 @@ class ConfigurationPage(QWidget):
         s.streaming = StreamingSettings()
         s.detection = DetectionSettings()
         s.preprocess = PreprocessSettings()
-        s.cip = CIPSettings()
+        s.mark2 = Mark2Settings()
         s.output = OutputSettings()
         
         # Recarrega a UI com os novos valores
@@ -684,69 +680,3 @@ class ConfigurationPage(QWidget):
     def _on_confidence_changed(self, value: int) -> None:
         """Handler para mudança de confiança."""
         self._confidence_label.setText(f"{value}%")
-    
-    def _test_plc_connection(self) -> None:
-        """Testa conexão com CLP usando os parâmetros atuais da UI."""
-        ip = self._plc_ip.text().strip()
-        port = self._plc_port.value()
-        timeout = self._conn_timeout.value()
-        simulated = self._simulated.isChecked()
-        
-        if simulated:
-            QMessageBox.information(
-                self, "Modo Simulado",
-                "O modo simulado está ativado.\n"
-                "Desmarque 'Modo simulado' para testar a conexão real com o CLP."
-            )
-            return
-        
-        if not ip:
-            QMessageBox.warning(self, "Aviso", "Informe o IP do CLP.")
-            return
-        
-        # Teste de alcance via socket (não depende do CIP completo)
-        import socket
-        
-        QMessageBox.information(
-            self, "Testando...",
-            f"Testando conexão TCP com {ip}:{port}...\n"
-            f"Timeout: {timeout}s"
-        )
-        
-        try:
-            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            sock.settimeout(timeout)
-            result = sock.connect_ex((ip, port))
-            sock.close()
-            
-            if result == 0:
-                QMessageBox.information(
-                    self, "Sucesso",
-                    f"Conexão TCP com {ip}:{port} estabelecida com sucesso.\n"
-                    f"O CLP está acessível na rede."
-                )
-                logger.info("plc_connection_test_success", ip=ip, port=port)
-            else:
-                QMessageBox.warning(
-                    self, "Falha",
-                    f"Não foi possível conectar a {ip}:{port}.\n"
-                    f"Código de erro: {result}\n\n"
-                    f"Verifique:\n"
-                    f"- O CLP está ligado e na rede?\n"
-                    f"- O IP e porta estão corretos?\n"
-                    f"- Há firewall bloqueando a porta?"
-                )
-                logger.warning("plc_connection_test_failed", ip=ip, port=port, error_code=result)
-        except socket.timeout:
-            QMessageBox.warning(
-                self, "Timeout",
-                f"Timeout ao conectar a {ip}:{port} ({timeout}s).\n"
-                f"O CLP não respondeu no tempo esperado."
-            )
-            logger.warning("plc_connection_test_timeout", ip=ip, port=port)
-        except Exception as e:
-            QMessageBox.critical(
-                self, "Erro",
-                f"Erro ao testar conexão: {e}"
-            )
-            logger.error("plc_connection_test_error", ip=ip, port=port, error=str(e))

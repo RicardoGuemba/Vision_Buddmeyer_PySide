@@ -28,6 +28,7 @@ class VideoWidget(QWidget):
     """
     
     clicked = Signal()
+    frame_clicked = Signal(float, float)  # (u, v) em pixels do frame
     double_clicked = Signal()
     
     def __init__(self, parent=None):
@@ -37,6 +38,8 @@ class VideoWidget(QWidget):
         self._current_result: Optional[DetectionResult] = None
         self._current_detections: List[Detection] = []
         self._pick_target: Optional[Detection] = None
+        self._pick_point_px: Optional[tuple] = None  # (u, v) ponto de pega Mark2
+        self._robot_status_text: str = ""
         self._show_overlay = True
         self._show_fps = True
         self._current_fps = 0.0
@@ -113,6 +116,29 @@ class VideoWidget(QWidget):
         if self._show_fps:
             self.update()
     
+    def set_pick_point(self, point: Optional[tuple]) -> None:
+        """Define ponto de pega Mark2 (u, v) em pixels do frame."""
+        self._pick_point_px = point
+        self.update()
+
+    def set_robot_status_text(self, text: str) -> None:
+        self._robot_status_text = text or ""
+        self.update()
+
+    def widget_to_frame_px(self, wx: float, wy: float) -> Optional[tuple]:
+        """Converte coordenada do widget para pixels do frame."""
+        if self._cached_offset_scale is None or self._current_frame is None:
+            return None
+        ox, oy, sx, sy = self._cached_offset_scale
+        if sx <= 0 or sy <= 0:
+            return None
+        u = (wx - ox) / sx
+        v = (wy - oy) / sy
+        h, w = self._current_frame.shape[:2]
+        if u < 0 or v < 0 or u >= w or v >= h:
+            return None
+        return float(u), float(v)
+
     def set_show_overlay(self, show: bool) -> None:
         """Define se mostra overlay de detecções."""
         self._show_overlay = show
@@ -129,6 +155,8 @@ class VideoWidget(QWidget):
         self._current_result = None
         self._current_detections = []
         self._pick_target = None
+        self._pick_point_px = None
+        self._robot_status_text = ""
         self._cached_pixmap = None
         self._cached_paint_size = None
         self._cached_frame_shape = None
@@ -194,9 +222,31 @@ class VideoWidget(QWidget):
         painter.drawPixmap(x, y, self._cached_pixmap)
         if self._show_overlay and self._current_detections:
             self._draw_detections(painter, x, y, scale_x, scale_y)
+        if self._show_overlay and self._pick_point_px is not None:
+            self._draw_pick_point(painter, x, y, scale_x, scale_y)
+        if self._robot_status_text:
+            painter.setPen(QColor(255, 255, 255))
+            painter.fillRect(8, 8, 280, 22, QColor(0, 0, 0, 160))
+            painter.drawText(12, 24, self._robot_status_text)
         if self._show_fps:
             self._draw_fps(painter)
         painter.end()
+
+    def _draw_pick_point(
+        self,
+        painter: QPainter,
+        offset_x: int,
+        offset_y: int,
+        scale_x: float,
+        scale_y: float,
+    ) -> None:
+        u, v = self._pick_point_px
+        cx = int(offset_x + u * scale_x)
+        cy = int(offset_y + v * scale_y)
+        painter.setPen(QPen(QColor(0, 200, 255), 2))
+        painter.drawEllipse(cx - 8, cy - 8, 16, 16)
+        painter.drawLine(cx - 12, cy, cx + 12, cy)
+        painter.drawLine(cx, cy - 12, cx, cy + 12)
     
     def _draw_detections(
         self,
@@ -435,8 +485,11 @@ class VideoWidget(QWidget):
             return self._colors["very_low"]
     
     def mousePressEvent(self, event) -> None:
-        """Evento de clique."""
+        """Evento de clique — emite também (u,v) em pixels do frame."""
         self.clicked.emit()
+        mapped = self.widget_to_frame_px(event.position().x(), event.position().y())
+        if mapped is not None:
+            self.frame_clicked.emit(mapped[0], mapped[1])
         super().mousePressEvent(event)
     
     def mouseDoubleClickEvent(self, event) -> None:

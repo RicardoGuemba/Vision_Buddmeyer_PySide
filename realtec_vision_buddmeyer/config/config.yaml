@@ -31,8 +31,8 @@ detection:
   segmentation_overlap_mask_area_threshold: 0.8
   segmentation_min_mask_pixels: 64
   prioritize_area: true
-  display_confidence_threshold: 0.8
-  plc_confidence_threshold: 0.8
+  display_confidence_threshold: 0.5
+  plc_confidence_threshold: 0.5
 preprocess:
   profile: bright
   brightness: 0.0
@@ -44,58 +44,7 @@ preprocess:
   - 277
   roi_unit: px
   roi_calibration_mm_per_px: 10.0
-cip:
-  ip: 192.168.1.10
-  port: 44818
-  connection_timeout: 10.0
-  timeout_ms: 10000
-  retry_interval: 2.0
-  max_retries: 3
-  io_retries: 2
-  simulated: false
-  heartbeat_interval: 1.0
-  auto_reconnect: true
-robot_control:
-  enabled: false
-  ack_timeout: 5.0
-  pick_timeout: 30.0
-  place_timeout: 30.0
-  authorization_timeout: 30.0
-  bypass_authorization: false
-tags:
-  VisionReady: VisionCtrl_VisionReady
-  VisionBusy: VisionCtrl_VisionBusy
-  VisionError: VisionCtrl_VisionError
-  VisionHeartbeat: VisionCtrl_Heartbeat
-  ProductDetected: PRODUCT_DETECTED
-  CentroidX: CENTROID_X
-  CentroidY: CENTROID_Y
-  CentroidAngle: CENTROID_ANGLE
-  ObjectArea: OBJECT_AREA
-  Confidence: CONFIDENCE
-  DetectionCount: DETECTION_COUNT
-  ProcessingTime: PROCESSING_TIME
-  VisionEchoAck: VisionCtrl_EchoAck
-  VisionDataSent: VisionCtrl_DataSent
-  VisionReadyForNext: VisionCtrl_ReadyForNext
-  SystemFault: SYSTEM_FAULT
-  RobotAck: ROBOT_ACK
-  RobotReady: ROBOT_READY
-  RobotError: ROBOT_ERROR
-  RobotBusy: RobotStatus_Busy
-  RobotPickComplete: RobotStatus_PickComplete
-  RobotPlaceComplete: RobotStatus_PlaceComplete
-  PlcAuthorizeDetection: RobotCtrl_AuthorizeDetection
-  PlcCycleStart: RobotCtrl_CycleStart
-  PlcCycleComplete: RobotCtrl_CycleComplete
-  PlcEmergencyStop: RobotCtrl_EmergencyStop
-  PlcSystemMode: RobotCtrl_SystemMode
-  Heartbeat: SystemStatus_Heartbeat
-  SystemMode: SystemStatus_Mode
-  SafetyGateClosed: Safety_GateClosed
-  SafetyAreaClear: Safety_AreaClear
-  SafetyLightCurtainOK: Safety_LightCurtainOK
-  SafetyEmergencyStop: Safety_EmergencyStop
+# Mark2: ver config/mark2.yaml (carregado automaticamente)
 output:
   rtsp_enabled: true
   http_port: 8080
