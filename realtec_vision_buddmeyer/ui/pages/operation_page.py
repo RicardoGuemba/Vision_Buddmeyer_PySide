@@ -41,12 +41,16 @@ class _ModelLoaderWorker(QObject):
     def __init__(self, inference_engine: InferenceEngine):
         super().__init__()
         self._engine = inference_engine
+        self._logger = get_logger("ui.model_loader")
 
     def run(self) -> None:
         try:
-            success = self._engine.load_model()
+            self._logger.info("model_loader_worker_started")
+            success = bool(self._engine.load_model())
+            self._logger.info("model_loader_worker_finished", success=success)
             self.finished.emit(success)
-        except Exception:
+        except Exception as e:
+            self._logger.error("model_loader_worker_failed", error=str(e), exc_info=True)
             self.finished.emit(False)
 
 
@@ -87,6 +91,8 @@ class OperationPage(QWidget):
         self._model_loader_thread: Optional[QThread] = None
         self._model_loader_worker: Optional[_ModelLoaderWorker] = None
         self._pending_start_source_label: Optional[str] = None
+        self._model_load_cancelled = False
+        self._stopping = False
         
         self._setup_ui()
         self._sync_combo_to_settings()
@@ -593,8 +599,10 @@ class OperationPage(QWidget):
         self._event_console.add_info(
             f"Stream iniciado: {source_labels[source_index]}"
         )
+        self._update_ui_state()
         
         source_label = source_labels[source_index]
+        self._model_load_cancelled = False
         
         # Carrega modelo em segundo plano (evita travar a UI)
         if not self._inference_engine.is_model_loaded:
@@ -603,6 +611,7 @@ class OperationPage(QWidget):
                 self._pending_start_source_label = source_label
                 self._play_btn.setText("Carregando modelo...")
                 self._play_btn.setEnabled(False)
+                self._update_ui_state()
                 return
             self._event_console.add_info("Carregando modelo de detecção... (pode levar 1–2 min na primeira vez)")
             self._play_btn.setText("Carregando modelo...")
@@ -614,6 +623,7 @@ class OperationPage(QWidget):
             self._model_loader_thread.started.connect(self._model_loader_worker.run)
             self._model_loader_worker.finished.connect(self._on_model_load_finished)
             self._model_loader_thread.start()
+            self._update_ui_state()
             return
         
         self._finish_start_system_after_model(source_label)
@@ -663,8 +673,10 @@ class OperationPage(QWidget):
     @Slot(bool)
     def _on_model_load_finished(self, success: bool) -> None:
         """Chamado quando o carregamento do modelo em segundo plano termina."""
-        label = self._pending_start_source_label
+        cancelled = self._model_load_cancelled
+        label = None if cancelled else self._pending_start_source_label
         self._pending_start_source_label = None
+        self._model_load_cancelled = False
         self._play_btn.setText("▶ Iniciar")
         self._play_btn.setEnabled(True)
         if self._model_loader_thread is not None:
@@ -673,11 +685,17 @@ class OperationPage(QWidget):
             self._model_loader_thread.deleteLater()
             self._model_loader_thread = None
         self._model_loader_worker = None
+        if cancelled:
+            self._logger.info("model_load_finished_after_cancel", success=success)
+            self.model_preload_finished.emit(success)
+            self._update_ui_state()
+            return
         if label is not None:
             # Fluxo "Iniciar": usuário clicou em Iniciar e esperou o modelo
             if not success:
                 self._event_console.add_error("Falha ao carregar modelo")
                 self._stream_manager.stop()
+                self._update_ui_state()
                 return
             self._event_console.add_info("Modelo carregado.")
             self._finish_start_system_after_model(label)
@@ -691,6 +709,7 @@ class OperationPage(QWidget):
             return
         if self._model_loader_thread is not None:
             return
+        self._model_load_cancelled = False
         self._model_loader_thread = QThread()
         self._model_loader_worker = _ModelLoaderWorker(self._inference_engine)
         self._model_loader_worker.moveToThread(self._model_loader_thread)
@@ -902,40 +921,64 @@ class OperationPage(QWidget):
         finally:
             await self._cip_client.disconnect()
     
+    def shutdown_for_exit(self) -> None:
+        """Libera câmera, inferência, CLP e cancela auto-start do modelo ao fechar o app."""
+        self._model_load_cancelled = True
+        self._pending_start_source_label = None
+        self._stop_system()
+
     @Slot()
     def _stop_system(self) -> None:
-        """Para o sistema de forma ordenada e estável."""
-        if not self._is_running:
+        """Para o sistema de forma ordenada, inclusive se o start ficou a meio (câmera aberta, modelo carregando)."""
+        if self._stopping:
             return
-
-        self._is_running = False
-        self._frame_count = 0
-        self._last_best_detection = None
-
-        self._event_console.add_info("Parando sistema...")
-
-        if self._mjpeg_server is not None:
-            try:
-                self._mjpeg_server.stop()
-            except Exception as e:
-                self._logger.warning("mjpeg_stop_error", error=str(e))
-            self._mjpeg_server = None
-
-        self._robot_controller.stop()
-        self._inference_engine.stop()
-        self._stream_manager.stop()
-
+        self._stopping = True
         try:
-            self._run_shutdown_plc_sync()
-        except Exception as e:
-            self._logger.warning("shutdown_plc_error", error=str(e))
+            stream_active = self._stream_manager.is_running
+            had_work = (
+                self._is_running
+                or stream_active
+                or self._inference_engine.is_running
+                or self._mjpeg_server is not None
+                or self._pending_start_source_label is not None
+            )
 
-        self._update_ui_state()
-        self._pause_btn.setText("⏸ Pausar")
-        self._video_widget.clear()
+            self._is_running = False
+            self._pending_start_source_label = None
+            self._model_load_cancelled = True
+            self._frame_count = 0
+            self._last_best_detection = None
 
-        self._event_console.add_info("Sistema parado")
-        self._status_panel.set_system_status("STOPPED")
+            if had_work:
+                self._event_console.add_info("Parando sistema...")
+
+            if self._mjpeg_server is not None:
+                try:
+                    self._mjpeg_server.stop()
+                except Exception as e:
+                    self._logger.warning("mjpeg_stop_error", error=str(e))
+                self._mjpeg_server = None
+
+            self._robot_controller.stop()
+            self._inference_engine.stop()
+            self._stream_manager.stop()
+
+            try:
+                self._run_shutdown_plc_sync()
+            except Exception as e:
+                self._logger.warning("shutdown_plc_error", error=str(e))
+
+            self._update_ui_state()
+            self._pause_btn.setText("⏸ Pausar")
+            self._play_btn.setText("▶ Iniciar")
+            self._play_btn.setEnabled(True)
+            self._video_widget.clear()
+
+            if had_work:
+                self._event_console.add_info("Sistema parado")
+            self._status_panel.set_system_status("STOPPED")
+        finally:
+            self._stopping = False
 
     def _run_shutdown_plc_sync(self) -> None:
         """Executa desconexão do CLP sem bloquear (evita deadlock ao sair)."""
@@ -976,10 +1019,11 @@ class OperationPage(QWidget):
     
     def _update_ui_state(self) -> None:
         """Atualiza estado da UI."""
-        self._play_btn.setEnabled(not self._is_running)
+        stream_on = self._stream_manager.is_running
+        self._play_btn.setEnabled(not self._is_running and not stream_on)
         self._pause_btn.setEnabled(self._is_running)
-        self._stop_btn.setEnabled(self._is_running)
-        self._source_combo.setEnabled(not self._is_running)
+        self._stop_btn.setEnabled(self._is_running or stream_on)
+        self._source_combo.setEnabled(not self._is_running and not stream_on)
         self._source_path_btn.setEnabled(True)  # Sempre habilitado
         
         # Controles de ciclo
@@ -1179,6 +1223,7 @@ class OperationPage(QWidget):
     def _on_stream_started(self) -> None:
         """Handler para stream iniciado."""
         self._event_console.add_info("Stream iniciado", "Stream")
+        self._update_ui_state()
     
     @Slot()
     def _on_stream_stopped(self) -> None:
@@ -1299,7 +1344,7 @@ class OperationPage(QWidget):
     @Slot(object)
     def _on_frame_available(self, frame_info) -> None:
         """Handler para frame - desenha ROI (overlay), exibe e envia para inferência."""
-        if not self._is_running:
+        if not self._stream_manager.is_running:
             return
         frame = frame_info.frame
         frame_for_display = self._draw_roi_overlay_if_enabled(frame)

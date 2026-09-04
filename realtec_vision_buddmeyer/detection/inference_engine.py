@@ -190,7 +190,8 @@ class InferenceWorker(QThread):
         self._pause_condition.wakeAll()
         self._frame_condition.wakeAll()
         self._mutex.unlock()
-        self.wait()
+        if not self.wait(8000):
+            logger.warning("inference_worker_stop_timeout")
 
 
 class InferenceEngine(QObject):

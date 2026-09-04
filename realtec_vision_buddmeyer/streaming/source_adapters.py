@@ -7,6 +7,7 @@ from abc import ABC, abstractmethod
 from enum import Enum
 from pathlib import Path
 from typing import Optional, Dict, Any
+import gc
 import platform
 import time
 
@@ -41,6 +42,7 @@ class BaseSourceAdapter(ABC):
         self._is_open = False
         self._frame_count = 0
         self._start_time: Optional[float] = None
+        self._stop_requested = False
     
     @abstractmethod
     def open(self) -> bool:
@@ -62,8 +64,13 @@ class BaseSourceAdapter(ABC):
         """
         pass
     
+    def request_stop(self) -> None:
+        """Sinaliza para a thread de captura interromper o próximo read()."""
+        self._stop_requested = True
+
     def close(self) -> None:
         """Fecha a fonte de vídeo."""
+        self._stop_requested = True
         if self._capture is not None:
             self._capture.release()
             self._capture = None
@@ -440,6 +447,7 @@ class GenTLHarvesterAdapter(BaseSourceAdapter):
 
     def open(self) -> bool:
         """Abre a câmera via Harvester (GenTL)."""
+        self._stop_requested = False
         try:
             from harvesters.core import Harvester
         except ImportError as e:
@@ -476,8 +484,32 @@ class GenTLHarvesterAdapter(BaseSourceAdapter):
             )
 
         self._harvester = h
-        self._ia = h.create(self.device_index)
-        self._ia.start()
+        try:
+            self._ia = h.create(self.device_index)
+            self._ia.start()
+        except Exception as e:
+            err = str(e)
+            try:
+                h.reset()
+            except Exception:
+                pass
+            self._harvester = None
+            self._ia = None
+            err_lower = err.lower()
+            if "opened by another client" in err_lower or "requested operation is not allowed" in err_lower:
+                raise StreamSourceError(
+                    "A camera GenTL selecionada ja esta em uso por outro aplicativo/cliente. "
+                    "Feche o software que esta usando a camera (ou outra instancia deste app) e tente novamente.",
+                    {
+                        "device_index": self.device_index,
+                        "cti_path": str(self.cti_path),
+                        "raw_error": err,
+                    },
+                ) from e
+            raise StreamSourceError(
+                f"Falha ao abrir camera GenTL no indice {self.device_index}: {err}",
+                {"device_index": self.device_index, "cti_path": str(self.cti_path), "raw_error": err},
+            ) from e
         # Não fazemos fetch() aqui: obter um frame 20MP na thread principal trava a UI.
         # Dimensões são preenchidas no primeiro read() (na thread do worker).
 
@@ -512,7 +544,7 @@ class GenTLHarvesterAdapter(BaseSourceAdapter):
 
     def read(self) -> Optional[FrameInfo]:
         """Lê um frame da câmera GenTL (redimensionado se necessário). Tudo roda na thread do worker."""
-        if not self._is_open or self._ia is None:
+        if self._stop_requested or not self._is_open or self._ia is None:
             return None
         try:
             with self._ia.fetch(timeout=self.fetch_timeout_ms) as buffer:
@@ -534,6 +566,8 @@ class GenTLHarvesterAdapter(BaseSourceAdapter):
                     self._first_frame_logged = True
                 return self._create_frame_info(image)
         except Exception as e:
+            if self._stop_requested:
+                return None
             logger.warning("gentl_read_failed", error=str(e))
             return None
 
@@ -626,13 +660,17 @@ class GenTLHarvesterAdapter(BaseSourceAdapter):
             return False
 
     def close(self) -> None:
-        """Fecha a câmera e libera Harvester."""
+        """Fecha a câmera e libera Harvester (todas as chamadas GenTL na mesma thread de captura)."""
+        self._stop_requested = True
         if self._ia is not None:
             try:
                 self._ia.stop()
-                self._ia.destroy()
             except Exception as e:
                 logger.warning("gentl_stop_error", error=str(e))
+            try:
+                self._ia.destroy()
+            except Exception as e:
+                logger.warning("gentl_destroy_error", error=str(e))
             self._ia = None
         if self._harvester is not None:
             try:
@@ -641,6 +679,7 @@ class GenTLHarvesterAdapter(BaseSourceAdapter):
                 logger.warning("gentl_reset_error", error=str(e))
             self._harvester = None
         self._is_open = False
+        gc.collect()
         logger.info("source_closed", source_type=self.source_type.value)
 
 

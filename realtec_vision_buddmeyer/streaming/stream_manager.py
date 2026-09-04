@@ -46,47 +46,59 @@ class StreamWorker(QThread):
         self._pause_condition = QWaitCondition()
     
     def run(self) -> None:
-        """Loop principal de captura."""
+        """Loop principal de captura. Abre e fecha o adaptador nesta thread (SDK GenTL)."""
+        try:
+            self._adapter.open()
+        except Exception as e:
+            logger.error("stream_adapter_open_failed", error=str(e))
+            self.error_occurred.emit(str(e))
+            return
+
         self._running = True
         frame_interval = 1.0 / self._target_fps if self._target_fps > 0 else 0.033
         
         logger.info("stream_worker_started", target_fps=self._target_fps)
         
-        while self._running:
-            # Verifica pause
-            self._mutex.lock()
-            while self._paused and self._running:
-                self._pause_condition.wait(self._mutex)
-            self._mutex.unlock()
-            
-            if not self._running:
-                break
-            
-            start_time = time.perf_counter()
-            
-            try:
-                frame_info = self._adapter.read()
+        try:
+            while self._running:
+                # Verifica pause
+                self._mutex.lock()
+                while self._paused and self._running:
+                    self._pause_condition.wait(self._mutex)
+                self._mutex.unlock()
                 
-                if frame_info is not None:
-                    self.frame_captured.emit(frame_info)
-                else:
-                    logger.warning("stream_read_none")
-                    time.sleep(0.1)
-                    continue
+                if not self._running:
+                    break
+                
+                start_time = time.perf_counter()
+                
+                try:
+                    frame_info = self._adapter.read()
                     
+                    if frame_info is not None:
+                        self.frame_captured.emit(frame_info)
+                    else:
+                        logger.warning("stream_read_none")
+                        time.sleep(0.1)
+                        continue
+                        
+                except Exception as e:
+                    logger.error("stream_read_error", error=str(e))
+                    self.error_occurred.emit(str(e))
+                    time.sleep(0.5)
+                    continue
+                
+                # Controle de FPS
+                elapsed = time.perf_counter() - start_time
+                sleep_time = frame_interval - elapsed
+                if sleep_time > 0:
+                    time.sleep(sleep_time)
+        finally:
+            try:
+                self._adapter.close()
             except Exception as e:
-                logger.error("stream_read_error", error=str(e))
-                self.error_occurred.emit(str(e))
-                time.sleep(0.5)
-                continue
-            
-            # Controle de FPS
-            elapsed = time.perf_counter() - start_time
-            sleep_time = frame_interval - elapsed
-            if sleep_time > 0:
-                time.sleep(sleep_time)
-        
-        logger.info("stream_worker_stopped")
+                logger.warning("stream_adapter_close_failed", error=str(e))
+            logger.info("stream_worker_stopped")
     
     def pause(self) -> None:
         """Pausa a captura."""
@@ -101,14 +113,17 @@ class StreamWorker(QThread):
         self._pause_condition.wakeAll()
         self._mutex.unlock()
     
-    def stop(self) -> None:
-        """Para a captura."""
+    def stop(self, timeout_ms: int = 8000) -> None:
+        """Para a captura e aguarda a thread fechar o adaptador."""
         self._running = False
+        if hasattr(self._adapter, "request_stop"):
+            self._adapter.request_stop()
         self._mutex.lock()
         self._paused = False
         self._pause_condition.wakeAll()
         self._mutex.unlock()
-        self.wait()
+        if not self.wait(timeout_ms):
+            logger.warning("stream_worker_stop_timeout", timeout_ms=timeout_ms)
 
 
 class StreamManager(QObject):
@@ -188,29 +203,31 @@ class StreamManager(QObject):
         return self._start_with_current_settings()
     
     def stop(self) -> None:
-        """Para o streaming."""
-        if not self._is_running:
-            return
-        
-        # Para worker
-        if self._worker is not None:
-            self._worker.stop()
-            self._worker.deleteLater()
-            self._worker = None
-        
-        # Fecha adaptador
-        if self._adapter is not None:
-            self._adapter.close()
-            self._adapter = None
-        
-        # Limpa buffer
+        """Para o streaming e libera a fonte, mesmo se o start ficou a meio."""
+        worker = self._worker
+        adapter = self._adapter
+        self._worker = None
+
+        if worker is not None:
+            worker.stop()
+            worker.deleteLater()
+
+        # Se a thread não fechou o adaptador (timeout ou start parcial), fecha aqui.
+        if adapter is not None and getattr(adapter, "is_open", False):
+            try:
+                adapter.close()
+            except Exception as e:
+                logger.warning("adapter_close_after_stop_failed", error=str(e))
+        self._adapter = None
+
         self._buffer.clear()
-        
+        was_running = self._is_running
         self._is_running = False
         self._current_frame = None
-        
+
         logger.info("stream_stopped")
-        self.stream_stopped.emit()
+        if was_running:
+            self.stream_stopped.emit()
     
     def get_gentl_adapter(self) -> Optional[Any]:
         """
@@ -272,13 +289,15 @@ class StreamManager(QObject):
             # Para worker e fecha adaptador atual
             if self._worker is not None:
                 self._worker.stop()
-                self._worker.wait(5000)  # Aguarda thread terminar
                 self._worker.deleteLater()
                 self._worker = None
             
-            if self._adapter is not None:
-                self._adapter.close()
-                self._adapter = None
+            if self._adapter is not None and getattr(self._adapter, "is_open", False):
+                try:
+                    self._adapter.close()
+                except Exception:
+                    pass
+            self._adapter = None
             
             self._is_running = False
         
@@ -435,21 +454,15 @@ class StreamManager(QObject):
                 loop_video=settings.loop_video,
             )
             
-            # Abre fonte
-            self._adapter.open()
+            # Abre a fonte na thread de captura (open/read/close no mesmo thread do SDK).
+            target_fps = 30.0
+            if settings.source_type == "gentl" and settings.gentl_target_fps > 0:
+                target_fps = float(settings.gentl_target_fps)
             
-            # Obtém FPS da fonte
-            props = self._adapter.get_properties()
-            target_fps = props.get("fps", 30.0)
-            if target_fps <= 0:
-                target_fps = 30.0
-            
-            # Cria worker
             self._worker = StreamWorker(self._adapter, target_fps)
             self._worker.frame_captured.connect(self._on_frame_captured)
             self._worker.error_occurred.connect(self._on_error)
             
-            # Inicia
             self._worker.start()
             self._is_running = True
             self._health.reset()
@@ -465,6 +478,7 @@ class StreamManager(QObject):
             
         except Exception as e:
             logger.error("stream_start_failed", error=str(e), source_type=self._settings.streaming.source_type)
+            self.stop()
             self.stream_error.emit(str(e))
             return False
     
@@ -536,6 +550,12 @@ class StreamManager(QObject):
         logger.error("stream_error", error=error)
         self._health.record_drop()
         self.stream_error.emit(error)
+        worker = self._worker
+        if worker is not None and not worker.isRunning():
+            self._is_running = False
+            self._adapter = None
+            self._worker = None
+            self.stream_stopped.emit()
 
 
 # Função de conveniência

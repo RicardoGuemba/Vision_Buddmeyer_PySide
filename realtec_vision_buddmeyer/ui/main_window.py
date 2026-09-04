@@ -10,7 +10,7 @@ from datetime import datetime
 from PySide6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QTabWidget,
     QStatusBar, QMenuBar, QMenu, QMessageBox,
-    QLabel, QFrame, QHBoxLayout
+    QLabel, QFrame, QHBoxLayout, QApplication
 )
 from PySide6.QtCore import Qt, QTimer, Slot
 from PySide6.QtGui import QAction, QKeySequence, QFont, QIcon
@@ -54,6 +54,10 @@ class MainWindow(QMainWindow):
         self._setup_connections()
         self._apply_theme()
         self._schedule_model_preload()
+        self._exiting = False
+        app = QApplication.instance()
+        if app is not None:
+            app.aboutToQuit.connect(self._on_about_to_quit)
         
         logger.info("main_window_initialized")
     
@@ -446,9 +450,19 @@ class MainWindow(QMainWindow):
             """
         )
     
+    def _on_about_to_quit(self) -> None:
+        """Garante liberação da câmera/SDK mesmo se a janela já tiver fechado."""
+        try:
+            self._operation_page.shutdown_for_exit()
+        except Exception as e:
+            logger.warning("about_to_quit_shutdown_error", error=str(e))
+
     def _confirm_and_exit(self) -> None:
         """Sair do sistema (menu Arquivo → Sair ou Ctrl+Q)."""
-        if self._operation_page._stream_manager.is_running:
+        if (
+            self._operation_page._stream_manager.is_running
+            or self._operation_page._is_running
+        ):
             reply = QMessageBox.question(
                 self,
                 "Confirmar Saída",
@@ -456,22 +470,25 @@ class MainWindow(QMainWindow):
                 QMessageBox.Yes | QMessageBox.No,
                 QMessageBox.No,
             )
-            if reply == QMessageBox.Yes:
-                # Defer shutdown para próxima iteração do event loop (evita travamento)
-                QTimer.singleShot(0, self._do_stop_and_exit)
-            else:
-                pass
-        else:
-            self.close()
+            if reply != QMessageBox.Yes:
+                return
+        self._operation_page.shutdown_for_exit()
+        self.close()
 
     def _do_stop_and_exit(self) -> None:
-        """Para o sistema e fecha a janela (executado em timer para não bloquear UI)."""
-        self._operation_page._stop_system()
-        QTimer.singleShot(150, self.close)
+        """Para o sistema e fecha a janela."""
+        self._operation_page.shutdown_for_exit()
+        self.close()
     
     def closeEvent(self, event) -> None:
-        """Evento de fechamento."""
-        if self._operation_page._stream_manager.is_running:
+        """Evento de fechamento: sempre libera câmera, modelo pendente e CLP."""
+        if self._exiting:
+            event.accept()
+            return
+        if (
+            self._operation_page._stream_manager.is_running
+            or self._operation_page._is_running
+        ):
             reply = QMessageBox.question(
                 self,
                 "Confirmar Saída",
@@ -479,19 +496,19 @@ class MainWindow(QMainWindow):
                 QMessageBox.Yes | QMessageBox.No,
                 QMessageBox.No,
             )
-            if reply == QMessageBox.Yes:
+            if reply != QMessageBox.Yes:
                 event.ignore()
-                QTimer.singleShot(0, self._do_stop_and_close_event)
-            else:
-                event.ignore()
-        else:
-            event.accept()
-            logger.info("application_closed")
+                return
+        self._exiting = True
+        self._operation_page.shutdown_for_exit()
+        event.accept()
+        logger.info("application_closed")
 
     def _do_stop_and_close_event(self) -> None:
         """Para o sistema e fecha a janela (para closeEvent)."""
-        self._operation_page._stop_system()
-        QTimer.singleShot(150, self._close_after_stop)
+        self._exiting = True
+        self._operation_page.shutdown_for_exit()
+        self.close()
 
     def _close_after_stop(self) -> None:
         """Fecha a janela após parada."""

@@ -56,3 +56,31 @@ detection:
   confidence_threshold: 2.0
 """, encoding="utf-8")
     return config_path
+
+
+@pytest.fixture(autouse=True)
+def _non_blocking_qt_dialogs(monkeypatch):
+    """Evita QMessageBox modal travar a suíte em ambiente headless."""
+    from PySide6.QtWidgets import QMessageBox
+
+    monkeypatch.setattr(
+        QMessageBox,
+        "question",
+        staticmethod(lambda *args, **kwargs: QMessageBox.No),
+    )
+    monkeypatch.setattr(
+        QMessageBox,
+        "information",
+        staticmethod(lambda *args, **kwargs: QMessageBox.Ok),
+    )
+    monkeypatch.setattr(
+        QMessageBox,
+        "warning",
+        staticmethod(lambda *args, **kwargs: QMessageBox.Ok),
+    )
+    monkeypatch.setattr(
+        QMessageBox,
+        "critical",
+        staticmethod(lambda *args, **kwargs: QMessageBox.Ok),
+    )
+    monkeypatch.setattr(QMessageBox, "about", staticmethod(lambda *args, **kwargs: None))
